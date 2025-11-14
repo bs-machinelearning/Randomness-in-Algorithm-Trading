@@ -983,34 +983,11 @@ def compute_smoothed_auc(auc_history, alpha=0.3):
 
 ✅ **Reproducibility:** P3 confirms one-command reproduction works
 
----
-
-## 12. Open Questions RESOLVED
-
-| Question | Answer | Resolved By | Date |
-|----------|--------|-------------|------|
-| AUC thresholds: 0.75/0.55 or adjust? | **0.75/0.55 locked** | Team consensus | Nov 7 |
-| Adjustment factor: 1.2/0.8 or 1.1/0.9? | **1.2/0.8 locked** (can tune Week 3) | P4 + Team | Nov 7 |
-| Convergence: 5 iters or continue to 20? | **5 consecutive iters = early stop** | Team consensus | Nov 8 |
-| Regime-specific thresholds? | **No, use global thresholds** (simplicity) | P1 + P5 | Nov 8 |
-| P6 code reuse approach? | **Direct import + extend** | P6 + P7 | Nov 7 |
-| Market hours constraint? | **Yes, respect RTH** (via P4's perturbation bounds) | P1 + P2 | Nov 6 |
-
-**All open questions from Day 0 are now RESOLVED. Spec is locked for Week 2 implementation.**
 
 ---
 
-## 13. Version History
 
-| Version | Date | Author | Changes |
-|---------|------|--------|---------|
-| 0.1 (Draft) | Nov 2, 2025 | P7 | Day 0 initial design |
-| 0.9 (Review) | Nov 5, 2025 | P7 | Incorporated team feedback |
-| **1.0 (Final)** | **Nov 9, 2025** | **P7** | **All sign-offs complete, spec locked** |
-
----
-
-## 14. Appendices
+## 12. Appendices
 
 ### Appendix A: Glossary
 
