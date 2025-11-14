@@ -1,4 +1,4 @@
-# P7 Day 0 Deliverables - Adaptive Adversary Framework Design
+# P7 Day 0 Deliverables - Adaptive Adversary Framework Design  
 
 **Date:** November 2, 2025  
 **Owner:** P7 (Adaptive Adversary Framework)  
