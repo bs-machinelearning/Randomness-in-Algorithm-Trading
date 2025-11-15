@@ -1,3 +1,8 @@
 __pycache__/
 *.pyc
 outputs/
+results/
+paper/figures/
+paper/tables/
+
+*.ipynb_checkpoints/
