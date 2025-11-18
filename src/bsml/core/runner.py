@@ -80,29 +80,30 @@ def main():
 
     print(f"Run completed. Outputs in: {out_dir}")
     
-# --- Week 2: append to results/seed_sweep.csv *only after a successful run* ---
-results_path = Path("results/seed_sweep.csv")
-results_path.parent.mkdir(parents=True, exist_ok=True)
+    # --- Week 2: append to results/seed_sweep.csv *only after a successful run* ---
+    results_path = Path("results/seed_sweep.csv")
+    results_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    header = [
+        "policy", "seed", "split",
+        "sharpe", "delta_is_bps", "maxdd", "exposure_diff_pct",
+        "timestamp"
+    ]
 
-header = [
-    "policy", "seed", "split",
-    "sharpe", "delta_is_bps", "maxdd", "exposure_diff_pct",
-    "timestamp"
-]
-
-exists = results_path.exists()
-with results_path.open("a", newline="") as f:
-    w = csv.writer(f)
-    if not exists:
-        w.writerow(header)
-    # NOTE: metrics are placeholders; P5 will compute real values.
-    # 'split' can be 'all' (single-split) or a label you and P2 decide.
-    w.writerow([
-        cfg.get("policy"), cfg.get("seed"), "all",
-        0.0, 0.0, 0.0, 0.0,
-        datetime.utcnow().isoformat()
-    ])
-# --- end append block ---
+    exists = results_path.exists()
+    with results_path.open("a", newline="") as f:
+        w = csv.writer(f)
+        if not exists:
+            w.writerow(header)
+        # NOTE: metrics are placeholders; P5 will compute real values.
+        # 'split' can be 'all' (single-split) or a label you and P2 decide.
+        w.writerow([
+            cfg.get("policy"), cfg.get("seed"), "all",
+            0.0, 0.0, 0.0, 0.0,
+            datetime.utcnow().isoformat()
+        ])
+    # --- end append block ---
+    print(f"Run completed. Outputs in: {out_dir}")
 
 if __name__ == "__main__":
     main()
