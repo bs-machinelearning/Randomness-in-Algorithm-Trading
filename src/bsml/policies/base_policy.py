@@ -337,3 +337,13 @@ class RandomizationPolicy(ABC):
             f"{self.__class__.__name__}(seed={self.seed}, "
             f"params={self.params})"
         )
+
+    # --- Runner interface shim (required by P3) ---
+    def generate_trades(prices: "pd.DataFrame") -> "pd.DataFrame":
+        """
+        Standard entry point required by the runner (P3).
+        Must return a DataFrame with columns:
+          ['date','symbol','side','qty','ref_price'].
+        P2 will implement the actual baseline logic here.
+        """
+        raise NotImplementedError("Baseline policy: implement generate_trades(prices).")
