@@ -319,6 +319,17 @@ class UniformPolicy(RandomizationPolicy):
             f"threshold_pct={self.params['threshold_pct']*100:.1f}%)"
         )
 
+    # --- Runner interface shim (required by P3) ---
+    def generate_trades(prices: "pd.DataFrame") -> "pd.DataFrame":
+        """
+        Standard entry point required by the runner (P3).
+        Must return a DataFrame with columns:
+          ['date','symbol','side','qty','ref_price'].
+        P4 will implement the actual uniform policy logic here.
+        """
+        raise NotImplementedError("Uniform policy: implement generate_trades(prices).")
+
+
 
 # ============================================================================
 # Predefined Parameter Sets
