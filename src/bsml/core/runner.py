@@ -11,7 +11,7 @@ from bsml.utils.logging import run_id_from_cfg, prepare_outdir, snapshot
 from bsml.cost.models import load_cost_config, apply_costs
 
 # P2 hook (baseline policy). P2 will implement generate_trades(prices) -> trades
-from bsml.policies import base_policy as policy
+from bsml.policies import baseline as policy
 
 
 def main():
