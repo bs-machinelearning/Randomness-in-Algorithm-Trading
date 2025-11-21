@@ -2,7 +2,7 @@
 P7 Adaptive Adversary Classifier - Production Grade
 
 Advanced adversary with:
-- 10-minute prediction window
+- Dynamic prediction window (auto-detected from data)
 - Cross-validation
 - SMOTE resampling for imbalanced data
 - Enhanced feature engineering
@@ -15,7 +15,7 @@ Week: 3
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
-from sklearn.metrics import roc_auc_score, classification_report, confusion_matrix
+from sklearn.metrics import roc_auc_score, confusion_matrix
 from sklearn.model_selection import cross_val_score
 from imblearn.over_sampling import SMOTE
 from typing import Tuple, Dict, Optional
@@ -25,14 +25,15 @@ warnings.filterwarnings('ignore')
 
 class P7AdaptiveAdversary:
     """
-    Production-grade adversary for 10-minute trade prediction.
+    Production-grade adversary with dynamic prediction window.
     
-    Predicts: "Will the next trade happen within 10 minutes?"
+    Predicts: "Will the next trade happen within X minutes?"
+    where X is determined by analyzing actual trade frequency.
     """
     
     def __init__(
         self, 
-        window_threshold_minutes: float = 10,
+        window_threshold_minutes: float,
         use_smote: bool = True,
         use_cv: bool = True,
         n_cv_folds: int = 3,
@@ -40,98 +41,99 @@ class P7AdaptiveAdversary:
     ):
         """
         Args:
-            window_threshold_minutes: Prediction window (10 min default)
+            window_threshold_minutes: Prediction window in minutes (REQUIRED)
             use_smote: Apply SMOTE for label balancing
             use_cv: Use cross-validation during training
             n_cv_folds: Number of CV folds
             random_state: Random seed for reproducibility
         """
-        self.threshold_minutes = window_threshold_minutes
+        # Validate window
+        if window_threshold_minutes is None:
+            raise ValueError("window_threshold_minutes must be provided!")
+        if window_threshold_minutes <= 0:
+            raise ValueError(f"window_threshold_minutes must be > 0, got {window_threshold_minutes}")
+        if window_threshold_minutes > 10080:  # 1 week
+            warnings.warn(f"Large prediction window: {window_threshold_minutes:.0f} min ({window_threshold_minutes/1440:.1f} days)")
+        
+        self.threshold_minutes = float(window_threshold_minutes)
         self.use_smote = use_smote
         self.use_cv = use_cv
         self.n_cv_folds = n_cv_folds
         self.random_state = random_state
         
+        # Models
         self.model_gb = None
         self.model_rf = None
         self.feature_cols = []
         self.cv_scores = []
         self.feature_importances = {}
         
+        # Training metadata
+        self.training_label_stats = None
+        
     def extract_features(self, trades_df: pd.DataFrame) -> pd.DataFrame:
         """
-        Extract rich features for intraday timing prediction.
+        Extract rich features for timing prediction.
         
-        Enhanced features:
-        - Multi-scale price momentum
-        - Volatility at multiple horizons
-        - Trade intensity metrics
-        - Time-of-day patterns
-        - Volume patterns
-        - Price level indicators
+        Features engineered for multiple timescales:
+        - Works for 10-minute predictions (HFT)
+        - Works for 24-hour predictions (daily trading)
+        - Works for multi-day predictions (weekly trading)
         """
         df = trades_df.sort_values(['symbol', 'timestamp']).copy()
         
         # =====================================================================
-        # PRICE FEATURES (Multi-scale momentum)
+        # PRICE MOMENTUM (Multi-scale)
         # =====================================================================
         for lag in [1, 2, 3, 5, 10]:
             df[f'price_return_{lag}'] = (
                 df.groupby('symbol')['mid_price'].pct_change(lag)
             )
         
-        # Return acceleration
         df['return_accel'] = (
             df['price_return_1'] - df.groupby('symbol')['price_return_1'].shift(1)
         )
         
         # =====================================================================
-        # VOLATILITY FEATURES (Multi-horizon)
+        # VOLATILITY (Multi-horizon)
         # =====================================================================
         for window in [3, 5, 10, 20]:
-            # Price volatility
             df[f'price_vol_{window}'] = (
                 df.groupby('symbol')['price_return_1']
                 .transform(lambda x: x.rolling(window, min_periods=2).std())
             )
             
-            # Volume volatility
             if 'volume' in df.columns:
                 df[f'volume_vol_{window}'] = (
                     df.groupby('symbol')['volume']
                     .transform(lambda x: x.rolling(window, min_periods=2).std())
                 )
         
-        # Volatility of volatility
         df['vol_of_vol'] = (
             df.groupby('symbol')['price_vol_5']
             .transform(lambda x: x.rolling(5, min_periods=2).std())
         )
         
         # =====================================================================
-        # PRICE LEVEL INDICATORS (Normalized)
+        # PRICE LEVELS (Normalized)
         # =====================================================================
         for window in [5, 10, 20]:
-            # Moving averages
+            # Moving average
             df[f'price_ma_{window}'] = (
                 df.groupby('symbol')['mid_price']
                 .transform(lambda x: x.rolling(window, min_periods=2).mean())
             )
             
-            # Compute volatility inline for z-score
+            # Z-score (inline volatility calculation)
             rolling_vol = (
                 df.groupby('symbol')['price_return_1']
                 .transform(lambda x: x.rolling(window, min_periods=2).std())
             )
-            
-            # Z-score: distance from MA in standard deviations
             df[f'price_zscore_{window}'] = (
-                (df['mid_price'] - df[f'price_ma_{window}']) / 
-                (rolling_vol + 1e-8)
+                (df['mid_price'] - df[f'price_ma_{window}']) / (rolling_vol + 1e-8)
             )
-        
-        # High/Low tracking
-        for window in [5, 10, 20]:
+            
+            # High/Low range
             df[f'price_high_{window}'] = (
                 df.groupby('symbol')['mid_price']
                 .transform(lambda x: x.rolling(window, min_periods=1).max())
@@ -145,44 +147,43 @@ class P7AdaptiveAdversary:
             )
         
         # =====================================================================
-        # TIME FEATURES (Intraday patterns)
+        # TIME FEATURES (Intraday + Weekly patterns)
         # =====================================================================
         dt = pd.to_datetime(df['timestamp'])
         df['hour'] = dt.dt.hour
         df['minute'] = dt.dt.minute
         df['day_of_week'] = dt.dt.dayofweek
         
-        # Time-of-day indicators
+        # Intraday patterns
         df['is_market_open'] = ((df['hour'] >= 9) & (df['hour'] < 16)).astype(int)
         df['is_morning'] = ((df['hour'] >= 9) & (df['hour'] < 12)).astype(int)
         df['is_afternoon'] = ((df['hour'] >= 12) & (df['hour'] < 16)).astype(int)
         df['is_close'] = ((df['hour'] >= 15) & (df['hour'] < 16)).astype(int)
-        
-        # Day of week dummies
-        df['is_monday'] = (df['day_of_week'] == 0).astype(int)
-        df['is_friday'] = (df['day_of_week'] == 4).astype(int)
-        
-        # Minutes since market open (approximate)
         df['minutes_since_open'] = (df['hour'] - 9) * 60 + df['minute']
         
+        # Weekly patterns
+        df['is_monday'] = (df['day_of_week'] == 0).astype(int)
+        df['is_friday'] = (df['day_of_week'] == 4).astype(int)
+        df['is_midweek'] = ((df['day_of_week'] >= 1) & (df['day_of_week'] <= 3)).astype(int)
+        
         # =====================================================================
-        # TRADE INTENSITY FEATURES
+        # TRADE INTENSITY (Critical for timing prediction)
         # =====================================================================
         for window in [3, 5, 10, 20]:
-            # Trade frequency
             df[f'trades_last_{window}'] = (
                 df.groupby('symbol')['exec_flag']
                 .transform(lambda x: x.rolling(window, min_periods=1).sum())
             )
-            
-            # Trade velocity
             df[f'trade_velocity_{window}'] = df[f'trades_last_{window}'] / window
         
-        # Time since last trade (in minutes)
+        # Time since last trade (KEY FEATURE)
         df['minutes_since_last'] = (
             df.groupby('symbol')['timestamp'].diff().dt.total_seconds() / 60.0
         )
-        df['minutes_since_last'] = df['minutes_since_last'].fillna(1440)  # 1 day default
+        df['minutes_since_last'] = df['minutes_since_last'].fillna(1440)
+        
+        # Normalized by prediction window (helps model generalize)
+        df['time_since_ratio'] = df['minutes_since_last'] / self.threshold_minutes
         
         # =====================================================================
         # QUANTITY PATTERNS
@@ -200,7 +201,6 @@ class P7AdaptiveAdversary:
                     .transform(lambda x: x.rolling(window, min_periods=1).std())
                 )
             
-            # Quantity change
             df['qty_change'] = df.groupby('symbol')['qty_abs'].diff()
         
         # =====================================================================
@@ -222,7 +222,12 @@ class P7AdaptiveAdversary:
     
     def create_labels(self, trades_df: pd.DataFrame) -> pd.Series:
         """
-        Create labels: Will next trade happen within 10 minutes?
+        Create labels: Will next trade happen within threshold minutes?
+        
+        Label distribution will depend on threshold:
+        - Small threshold (10 min) → Few positives
+        - Medium threshold (6 hours) → Balanced
+        - Large threshold (24 hours) → Many positives
         """
         df = trades_df.sort_values(['symbol', 'timestamp']).copy()
         
@@ -239,7 +244,7 @@ class P7AdaptiveAdversary:
         return df['label']
     
     def _select_features(self, features_df: pd.DataFrame) -> list:
-        """Select numeric feature columns, excluding metadata"""
+        """Select numeric features, excluding metadata"""
         exclude = {
             'timestamp', 'symbol', 'policy_id', 'label', 'side', 
             'date', 'exec_flag', 'pnl', 'ref_price', 'minutes_to_next',
@@ -253,13 +258,37 @@ class P7AdaptiveAdversary:
         
         return feature_cols
     
+    def _validate_labels(self, y: np.ndarray, min_samples: int = 10) -> Tuple[bool, str]:
+        """
+        Validate label distribution before training.
+        
+        Returns:
+            (is_valid, reason)
+        """
+        n_pos = y.sum()
+        n_neg = len(y) - n_pos
+        
+        if n_pos < min_samples:
+            return False, f'Too few positive samples ({n_pos} < {min_samples})'
+        if n_neg < min_samples:
+            return False, f'Too few negative samples ({n_neg} < {min_samples})'
+        if n_pos == 0 or n_neg == 0:
+            return False, 'Single class detected'
+        
+        # Check extreme imbalance
+        pos_rate = n_pos / len(y)
+        if pos_rate < 0.01:
+            return False, f'Extreme imbalance: only {pos_rate*100:.2f}% positive'
+        if pos_rate > 0.99:
+            return False, f'Extreme imbalance: {pos_rate*100:.2f}% positive'
+        
+        return True, 'OK'
+    
     def train(self, trades_df: pd.DataFrame, verbose: bool = True) -> Dict:
-        """
-        Train adversary with advanced techniques.
-        """
+        """Train adversary with validation"""
         if verbose:
             print(f"  [Adversary] Training on {len(trades_df)} samples...")
-            print(f"  [Adversary] Prediction window: {self.threshold_minutes} minutes")
+            print(f"  [Adversary] Prediction window: {self.threshold_minutes:.1f} min ({self.threshold_minutes/60:.2f} hrs)")
         
         # Extract features
         features_df = self.extract_features(trades_df)
@@ -276,29 +305,46 @@ class P7AdaptiveAdversary:
         X = features_df[self.feature_cols].fillna(0).values
         y = labels.values
         
-        # Check label distribution
+        # Check distribution
         n_pos = y.sum()
         n_neg = len(y) - n_pos
-        pos_rate = n_pos / len(y) * 100
+        pos_rate = n_pos / len(y)
         
         if verbose:
-            print(f"  [Adversary] Labels → 0: {n_neg}, 1: {n_pos} ({pos_rate:.1f}% positive)")
+            print(f"  [Adversary] Labels → 0: {n_neg}, 1: {n_pos} ({pos_rate*100:.1f}% positive)")
         
-        # Validation
-        if n_pos < 5 or n_neg < 5:
-            print(f"  [ERROR] Too few samples in one class!")
-            return {'success': False, 'reason': 'insufficient_samples', 'n_samples': len(X), 'n_features': len(self.feature_cols)}
+        # Store label stats
+        self.training_label_stats = {
+            'n_positive': int(n_pos),
+            'n_negative': int(n_neg),
+            'positive_rate': float(pos_rate)
+        }
         
-        # Apply SMOTE if needed
-        if self.use_smote and pos_rate < 40:
+        # Validate
+        is_valid, reason = self._validate_labels(y, min_samples=10)
+        if not is_valid:
+            print(f"  [ERROR] Invalid labels: {reason}")
+            return {
+                'success': False, 
+                'reason': reason,
+                'n_samples': len(X),
+                'n_features': len(self.feature_cols),
+                'label_distribution': {'positive': int(n_pos), 'negative': int(n_neg)}
+            }
+        
+        # Apply SMOTE if needed (only if significantly imbalanced)
+        if self.use_smote and (pos_rate < 0.25 or pos_rate > 0.75):
             if verbose:
-                print(f"  [Adversary] Applying SMOTE resampling...")
+                print(f"  [Adversary] Applying SMOTE (imbalance: {pos_rate*100:.1f}%)...")
             
             try:
+                target_ratio = 0.5 if pos_rate < 0.5 else 0.5
+                k_neighbors = min(5, min(n_pos, n_neg) - 1)
+                
                 smote = SMOTE(
-                    sampling_strategy=0.5,
+                    sampling_strategy=target_ratio,
                     random_state=self.random_state,
-                    k_neighbors=min(5, n_pos - 1)
+                    k_neighbors=max(1, k_neighbors)
                 )
                 X, y = smote.fit_resample(X, y)
                 
@@ -348,17 +394,15 @@ class P7AdaptiveAdversary:
             
             try:
                 cv_scores = cross_val_score(
-                    self.model_gb, 
-                    X_cv, 
-                    y_cv, 
+                    self.model_gb, X_cv, y_cv,
                     cv=self.n_cv_folds,
                     scoring='roc_auc',
                     n_jobs=-1
                 )
                 self.cv_scores = cv_scores
                 cv_results = {
-                    'cv_mean': cv_scores.mean(),
-                    'cv_std': cv_scores.std(),
+                    'cv_mean': float(cv_scores.mean()),
+                    'cv_std': float(cv_scores.std()),
                     'cv_scores': cv_scores.tolist()
                 }
                 
@@ -375,8 +419,8 @@ class P7AdaptiveAdversary:
             
             if verbose:
                 top_features = sorted(
-                    self.feature_importances.items(), 
-                    key=lambda x: x[1], 
+                    self.feature_importances.items(),
+                    key=lambda x: x[1],
                     reverse=True
                 )[:5]
                 print(f"  [Adversary] Top 5 features:")
@@ -394,19 +438,17 @@ class P7AdaptiveAdversary:
             **cv_results
         }
     
-    def evaluate(
-        self, 
-        trades_df: pd.DataFrame, 
-        verbose: bool = True,
-        return_predictions: bool = False
-    ) -> Dict:
-        """
-        Evaluate adversary on validation/test data.
-        """
+    def evaluate(self, trades_df: pd.DataFrame, verbose: bool = True, 
+                 return_predictions: bool = False) -> Dict:
+        """Evaluate on validation/test data"""
         if self.model_gb is None or self.model_rf is None:
             if verbose:
                 print("  [ERROR] Models not trained!")
-            return {'auc': 0.50, 'success': False, 'n_samples': 0, 'label_distribution': {'positive': 0, 'negative': 0}}
+            return {
+                'auc': 0.50, 'success': False,
+                'n_samples': 0,
+                'label_distribution': {'positive': 0, 'negative': 0}
+            }
         
         if verbose:
             print(f"  [Adversary] Evaluating on {len(trades_df)} samples...")
@@ -420,7 +462,6 @@ class P7AdaptiveAdversary:
         X = features_df[self.feature_cols].fillna(0).values
         y = labels.values
         
-        # Check labels
         n_pos = y.sum()
         n_neg = len(y) - n_pos
         
@@ -429,11 +470,9 @@ class P7AdaptiveAdversary:
         
         if n_pos == 0 or n_neg == 0:
             if verbose:
-                print(f"  [WARNING] All labels same class! Returning AUC=0.50")
+                print(f"  [WARNING] Single class! Returning AUC=0.50")
             return {
-                'auc': 0.50, 
-                'success': False, 
-                'reason': 'single_class',
+                'auc': 0.50, 'success': False, 'reason': 'single_class',
                 'n_samples': len(y),
                 'label_distribution': {'positive': int(n_pos), 'negative': int(n_neg)}
             }
@@ -443,7 +482,7 @@ class P7AdaptiveAdversary:
         y_pred_rf = self.model_rf.predict_proba(X)[:, 1]
         y_pred_proba = (y_pred_gb + y_pred_rf) / 2.0
         
-        # Compute AUC
+        # AUC
         auc = roc_auc_score(y, y_pred_proba)
         
         # Confusion matrix
@@ -476,9 +515,7 @@ def time_split_trades(
     train_ratio: float = 0.6,
     val_ratio: float = 0.2
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """
-    Split trades chronologically.
-    """
+    """Chronological split to avoid lookahead bias"""
     df = trades_df.sort_values('timestamp').reset_index(drop=True)
     
     n = len(df)
