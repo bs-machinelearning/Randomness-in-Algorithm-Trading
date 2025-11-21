@@ -1,8 +1,8 @@
 """
 P7 Adaptive Adversary Classifier
 
-Lightweight adversary specifically for adaptive parameter tuning.
-Predicts trade occurrence based on policy-generated trades.
+Predicts trade timing patterns to measure policy predictability.
+Used in adaptive feedback loop to tune randomization parameters.
 
 Owner: P7
 Week: 3
@@ -17,210 +17,221 @@ from typing import Tuple
 
 class P7AdaptiveAdversary:
     """
-    Adversary classifier for P7's adaptive loop.
+    Lightweight adversary for adaptive parameter tuning.
     
-    Predicts: "Will this policy make a trade in the next time window?"
+    Predicts: "Will the next trade happen soon?" based on time gaps.
     """
     
-    def __init__(self, window_size: int = 1):
+    def __init__(self, window_threshold_days: float = 1.5):
         """
         Args:
-            window_size: How many bars ahead to predict trades
+            window_threshold_days: Threshold for "soon" prediction
         """
-        self.window_size = window_size
+        self.threshold = window_threshold_days
         self.model = None
+        self.feature_cols = []
         
     def extract_features(self, trades_df: pd.DataFrame) -> pd.DataFrame:
         """
-        Extract features from trade data for adversary.
+        Extract predictive features from trade history.
         
-        Features focus on:
-        - Price momentum patterns
-        - Trade timing patterns
-        - Trade size patterns
-        - Volatility indicators
+        Features:
+        - Price momentum (returns over multiple windows)
+        - Price volatility (rolling std)
+        - Trade frequency patterns
+        - Time-based patterns (hour, day of week)
         """
         df = trades_df.sort_values(['symbol', 'timestamp']).copy()
         
-        # Price features
-        df['price_return'] = df.groupby('symbol')['mid_price'].pct_change()
-        df['price_return_abs'] = df['price_return'].abs()
+        # === PRICE FEATURES ===
+        df['price_return_1'] = df.groupby('symbol')['mid_price'].pct_change(1)
+        df['price_return_5'] = df.groupby('symbol')['mid_price'].pct_change(5)
         
-        # Rolling statistics (per symbol)
+        # Rolling volatility
         for window in [3, 5, 10]:
-            df[f'price_mean_{window}'] = (
-                df.groupby('symbol')['mid_price']
-                .transform(lambda x: x.rolling(window, min_periods=1).mean())
-            )
-            df[f'price_std_{window}'] = (
-                df.groupby('symbol')['mid_price']
-                .transform(lambda x: x.rolling(window, min_periods=1).std())
-            )
-            df[f'price_zscore_{window}'] = (
-                (df['mid_price'] - df[f'price_mean_{window}']) / 
-                (df[f'price_std_{window}'] + 1e-6)
+            df[f'price_vol_{window}'] = (
+                df.groupby('symbol')['price_return_1']
+                .transform(lambda x: x.rolling(window, min_periods=2).std())
             )
         
-        # Time-based features
+        # Price levels (normalized)
+        for window in [5, 10, 20]:
+            df[f'price_ma_{window}'] = (
+                df.groupby('symbol')['mid_price']
+                .transform(lambda x: x.rolling(window, min_periods=2).mean())
+            )
+            df[f'price_vs_ma_{window}'] = (
+                df['mid_price'] / (df[f'price_ma_{window}'] + 1e-8)
+            )
+        
+        # === TIME FEATURES ===
         df['hour'] = pd.to_datetime(df['timestamp']).dt.hour
         df['day_of_week'] = pd.to_datetime(df['timestamp']).dt.dayofweek
         df['is_monday'] = (df['day_of_week'] == 0).astype(int)
         df['is_friday'] = (df['day_of_week'] == 4).astype(int)
         
-        # Trade size patterns
-        if 'qty' in df.columns:
-            df['qty_abs'] = df['qty'].abs()
-            df['log_qty'] = np.log1p(df['qty_abs'])
-        
-        # Volume patterns
-        if 'volume' in df.columns:
-            df['log_volume'] = np.log1p(df['volume'])
-            for window in [3, 5]:
-                df[f'volume_mean_{window}'] = (
-                    df.groupby('symbol')['volume']
-                    .transform(lambda x: x.rolling(window, min_periods=1).mean())
-                )
-        
-        # Recent trade frequency (using exec_flag)
+        # === TRADE FREQUENCY ===
         for window in [3, 5, 10]:
             df[f'trades_last_{window}'] = (
                 df.groupby('symbol')['exec_flag']
                 .transform(lambda x: x.rolling(window, min_periods=1).sum())
             )
         
-        # Distance from recent prices
-        df['price_vs_mean3'] = df['mid_price'] / (df['price_mean_3'] + 1e-6)
-        df['price_vs_mean5'] = df['mid_price'] / (df['price_mean_5'] + 1e-6)
+        # === QUANTITY PATTERNS ===
+        if 'qty' in df.columns:
+            df['qty_abs'] = df['qty'].abs()
+            df['qty_ma_5'] = (
+                df.groupby('symbol')['qty_abs']
+                .transform(lambda x: x.rolling(5, min_periods=1).mean())
+            )
         
         return df
     
     def create_labels(self, trades_df: pd.DataFrame) -> pd.Series:
         """
-        Create binary labels: Will a trade occur in next window_size bars?
+        Create labels based on time to next trade.
         
-        Uses vectorized approach for speed.
+        Label = 1 if next trade happens within threshold days
+        Label = 0 otherwise (weekend, holiday, or last trade)
+        
+        This creates natural variation:
+        - Normal trading days: next trade in 1 day → label=1
+        - Weekends/holidays: next trade in 3+ days → label=0
         """
         df = trades_df.sort_values(['symbol', 'timestamp']).copy()
         
-        # Shift exec_flag forward by window_size and check if any execution happens
-        df['label'] = 0
+        # Calculate days until next trade (per symbol)
+        df['days_to_next'] = (
+            df.groupby('symbol')['timestamp']
+            .shift(-1) - df['timestamp']
+        ).dt.total_seconds() / 86400.0
         
-        for symbol in df['symbol'].unique():
-            mask = df['symbol'] == symbol
-            symbol_data = df.loc[mask, 'exec_flag'].values
-            
-            # For each position, check if there's a trade in next window_size steps
-            labels = np.zeros(len(symbol_data), dtype=int)
-            for i in range(len(symbol_data)):
-                window_end = min(i + self.window_size + 1, len(symbol_data))
-                # Check if any exec_flag=1 in the forward window
-                if symbol_data[i:window_end].sum() > 0:
-                    labels[i] = 1
-            
-            df.loc[mask, 'label'] = labels
+        # Create binary labels
+        df['label'] = (df['days_to_next'] <= self.threshold).astype(int)
+        
+        # Last trade per symbol has no "next" → label as 0
+        df['label'] = df['label'].fillna(0).astype(int)
         
         return df['label']
     
-    def train(self, trades_df: pd.DataFrame) -> None:
+    def train(self, trades_df: pd.DataFrame, verbose: bool = True) -> bool:
         """
-        Train adversary classifier on trades.
+        Train adversary on trade history.
+        
+        Returns:
+            True if training succeeded, False if failed
         """
-        print(f"  [Adversary] Training on {len(trades_df)} samples...")
+        if verbose:
+            print(f"  [Adversary] Training on {len(trades_df)} samples...")
         
         # Extract features
         features_df = self.extract_features(trades_df)
         
-        # Create labels
+        # Generate labels
         labels = self.create_labels(features_df)
         features_df['label'] = labels
         
-        # Debug: print label distribution
-        print(f"  [Adversary] Labels - 0: {(labels==0).sum()}, 1: {(labels==1).sum()}")
-        print(f"  [Adversary] Positive rate: {labels.mean()*100:.1f}%")
+        # Debug: label distribution
+        n_pos = labels.sum()
+        n_total = len(labels)
+        if verbose:
+            print(f"  [Adversary] Labels → 0: {n_total - n_pos}, 1: {n_pos} "
+                  f"({n_pos/n_total*100:.1f}% positive)")
         
-        # Select numeric feature columns
-        exclude = {'timestamp', 'symbol', 'policy_id', 'label', 'side', 
-                   'date', 'exec_flag', 'pnl', 'ref_price'}
-        feature_cols = [
-            c for c in features_df.columns 
+        # Check if we can train
+        if n_pos == 0:
+            print("  [ERROR] No positive labels! Cannot train.")
+            return False
+        if n_pos == n_total:
+            print("  [ERROR] All labels positive! Cannot train.")
+            return False
+        if n_pos < 10 or (n_total - n_pos) < 10:
+            print("  [ERROR] Too few samples in one class!")
+            return False
+        
+        # Select feature columns
+        exclude = {
+            'timestamp', 'symbol', 'policy_id', 'label', 'side', 
+            'date', 'exec_flag', 'pnl', 'ref_price', 'days_to_next',
+            'qty', 'volume', 'price'
+        }
+        self.feature_cols = [
+            c for c in features_df.columns
             if c not in exclude and np.issubdtype(features_df[c].dtype, np.number)
         ]
         
-        print(f"  [Adversary] Using {len(feature_cols)} features")
+        if verbose:
+            print(f"  [Adversary] Using {len(self.feature_cols)} features")
         
-        # Prepare data
-        X = features_df[feature_cols].fillna(0).values
-        y = features_df['label'].values
-        
-        # Check if we can train
-        if y.sum() == 0:
-            print(f"  [WARNING] No positive labels! Cannot train.")
-            return
-        if y.sum() == len(y):
-            print(f"  [WARNING] All labels are positive! Cannot train.")
-            return
+        # Prepare training data
+        X = features_df[self.feature_cols].fillna(0).values
+        y = labels.values
         
         # Train classifier
         self.model = HistGradientBoostingClassifier(
             max_depth=4,
             learning_rate=0.1,
-            max_iter=50,
+            max_iter=100,
+            min_samples_leaf=20,
             random_state=42
         )
         
         self.model.fit(X, y)
-        print(f"  [Adversary] Training complete")
+        
+        if verbose:
+            print(f"  [Adversary] Training complete ✓")
+        
+        return True
     
-    def evaluate(self, trades_df: pd.DataFrame) -> float:
+    def evaluate(self, trades_df: pd.DataFrame, verbose: bool = True) -> float:
         """
-        Evaluate adversary on new trades, return AUC score.
+        Evaluate adversary on validation data.
         
         Returns:
-            AUC score (0.5 = random, 1.0 = perfect prediction)
+            AUC score (0.5 = random, 1.0 = perfect)
         """
         if self.model is None:
-            print(f"  [WARNING] Model not trained, returning 0.50")
+            if verbose:
+                print("  [ERROR] Model not trained!")
             return 0.50
         
-        print(f"  [Adversary] Evaluating on {len(trades_df)} samples...")
+        if verbose:
+            print(f"  [Adversary] Evaluating on {len(trades_df)} samples...")
         
         # Extract features
         features_df = self.extract_features(trades_df)
         
-        # Create labels
+        # Generate labels
         labels = self.create_labels(features_df)
         features_df['label'] = labels
         
-        # Debug: print label distribution
-        print(f"  [Adversary] Val Labels - 0: {(labels==0).sum()}, 1: {(labels==1).sum()}")
-        print(f"  [Adversary] Val Positive rate: {labels.mean()*100:.1f}%")
-        
-        # Select feature columns
-        exclude = {'timestamp', 'symbol', 'policy_id', 'label', 'side',
-                   'date', 'exec_flag', 'pnl', 'ref_price'}
-        feature_cols = [
-            c for c in features_df.columns 
-            if c not in exclude and np.issubdtype(features_df[c].dtype, np.number)
-        ]
-        
-        # Prepare data
-        X = features_df[feature_cols].fillna(0).values
-        y = features_df['label'].values
+        # Debug: label distribution
+        n_pos = labels.sum()
+        n_total = len(labels)
+        if verbose:
+            print(f"  [Adversary] Val labels → 0: {n_total - n_pos}, 1: {n_pos} "
+                  f"({n_pos/n_total*100:.1f}% positive)")
         
         # Check if we can evaluate
-        if y.sum() == 0 or y.sum() == len(y):
-            print(f"  [WARNING] All labels same class! Returning 0.50")
+        if n_pos == 0 or n_pos == n_total:
+            if verbose:
+                print("  [WARNING] All labels same class! Returning AUC=0.50")
             return 0.50
         
-        # Predict
+        # Prepare data
+        X = features_df[self.feature_cols].fillna(0).values
+        y = labels.values
+        
+        # Predict probabilities
         y_pred_proba = self.model.predict_proba(X)[:, 1]
         
-        # Calculate AUC
+        # Compute AUC
         auc = roc_auc_score(y, y_pred_proba)
         
-        print(f"  [Adversary] AUC = {auc:.4f}")
+        if verbose:
+            print(f"  [Adversary] AUC = {auc:.4f}")
         
-        return auc
+        return float(auc)
 
 
 def time_split_trades(
@@ -229,12 +240,12 @@ def time_split_trades(
     val_ratio: float = 0.2
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
-    Split trades by time for training/validation/testing.
+    Split trades chronologically for training/validation/testing.
     
     Args:
-        trades_df: DataFrame of trades
+        trades_df: Trade records
         train_ratio: Fraction for training
-        val_ratio: Fraction for validation
+        val_ratio: Fraction for validation (rest goes to test)
     
     Returns:
         (train_df, val_df, test_df)
@@ -245,10 +256,8 @@ def time_split_trades(
     train_end = int(n * train_ratio)
     val_end = int(n * (train_ratio + val_ratio))
     
-    train = df.iloc[:train_end]
-    val = df.iloc[train_end:val_end]
-    test = df.iloc[val_end:]
-    
-    print(f"  [Split] Train: {len(train)}, Val: {len(val)}, Test: {len(test)}")
+    train = df.iloc[:train_end].copy()
+    val = df.iloc[train_end:val_end].copy()
+    test = df.iloc[val_end:].copy()
     
     return train, val, test
