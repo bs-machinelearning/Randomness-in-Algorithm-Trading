@@ -1,16 +1,12 @@
 """P7 Week 3: Adaptive Adversary v1.0"""
-import sys
-from pathlib import Path
-
-repo_root = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(repo_root / 'tests'))
-
 import numpy as np
 import pandas as pd
+from pathlib import Path
+
 from bsml.policies import UniformPolicy, DEFAULT_UNIFORM_PARAMS
 from bsml.data.loader import load_prices
 from bsml.adaptive.bridge import enrich_trades_for_adversary
-import Skeleton_Adversary_Model as sadv
+from bsml.adaptive.adversary_classifier import P7AdaptiveAdversary, time_split_trades
 
 AUC_HIGH = 0.75
 AUC_LOW = 0.55
@@ -30,24 +26,24 @@ def adaptive_training_loop(prices_df, max_iter=5):
     
     for i in range(max_iter):
         print(f"\nITER {i+1}: params={params}")
+        
+        # Generate trades
         trades = policy.generate_trades(prices_df)
         enriched = enrich_trades_for_adversary(trades, prices_df)
-        features = sadv.extract_features(enriched, [10, 50])
-        features['label'] = sadv.generate_labels(features, 1)
-        features = features.dropna(subset=['label'])
         
-        train, val, _ = sadv.make_time_splits(features, "2024-06-30", "2024-09-30")
-        if len(val) < 50: val = train
+        # Split data
+        train, val, test = time_split_trades(enriched)
         
-        fcols = [c for c in features.columns if np.issubdtype(features[c].dtype, np.number) and c not in {'label','pnl'}]
-        X_tr, y_tr = train[fcols].fillna(0), train['label'].values
+        if len(val) < 50:
+            print("Not enough validation data")
+            break
         
-        if y_tr.sum() in [0, len(y_tr)]:
-            auc = 0.50
-        else:
-            model = sadv.train_adversary_classifier(X_tr, y_tr)
-            X_val, y_val = val[fcols].fillna(0), val['label'].values
-            auc = sadv.compute_auc(model, X_val, y_val) if y_val.sum() not in [0, len(y_val)] else 0.50
+        # Train adversary
+        adversary = P7AdaptiveAdversary(window_size=5)
+        adversary.train(train)
+        
+        # Evaluate on validation set
+        auc = adversary.evaluate(val)
         
         print(f"AUC: {auc:.4f}")
         action, mult = decide_adjustment(auc)
@@ -62,7 +58,7 @@ def adaptive_training_loop(prices_df, max_iter=5):
     return results
 
 def main():
-    print("P7 WEEK 3 PILOT")
+    print("P7 WEEK 3 PILOT: P7 Adaptive Adversary")
     prices = load_prices("data/ALL_backtest.csv")
     print(f"Loaded {len(prices)} rows")
     results = adaptive_training_loop(prices, max_iter=5)
