@@ -154,17 +154,14 @@ class AdversaryClassifier:
 
 
 class AdversaryMetrics:
-    """
-    Calculate additional adversary performance metrics
-    """
     
-    @staticmethod
+
     def calculate_precision_recall_auc(y_true, y_pred_proba):
         """Calculate Precision-Recall AUC"""
         precision, recall, _ = precision_recall_curve(y_true, y_pred_proba)
         return auc(recall, precision)
     
-    @staticmethod
+
     def calculate_pnr(y_true, y_pred_proba, threshold=0.5):
         """
         Calculate Positive Net Reclassification (PNR)
