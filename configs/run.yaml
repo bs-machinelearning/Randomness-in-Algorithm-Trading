@@ -1,8 +1,7 @@
-$1101
+seed: 303
 policy: pink
 exposure_diff_pct: null
 output_dir: outputs/runs/latest
 data:
   prices_csv: data/toy_prices_baseline.csv
 costs: configs/costs.yaml
-

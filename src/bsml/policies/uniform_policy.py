@@ -1,3 +1,6 @@
+import pandas as pd
+from pathlib import Path
+import yaml
 """
 Uniform randomization policy.
 
@@ -320,41 +323,74 @@ class UniformPolicy(RandomizationPolicy):
         )
 
 # --- Runner interface shim (required by P3) ---
-def generate_trades(prices: "pd.DataFrame") -> "pd.DataFrame":
-    """
-    Standard entry point required by the runner (P3).
-    Must return a DataFrame with columns:
-      ['date','symbol','side','qty','ref_price'].
-    P4 will implement the actual uniform policy logic here.
-    """
-    raise NotImplementedError("Uniform policy: implement generate_trades(prices).")
-
-
-
-# ============================================================================
-# Predefined Parameter Sets
-# ============================================================================
+# --- Runner interface shim & parameter sets (used by P3/P6) ---
 
 DEFAULT_UNIFORM_PARAMS = {
     'timing_range_hours': 2.0,   # ±2 hours
-    'threshold_pct': 0.10,        # ±10%
+    'threshold_pct': 0.10,       # ±10%
     'respect_market_hours': True
 }
 
 CONSERVATIVE_UNIFORM_PARAMS = {
-    'timing_range_hours': 1.0,   # ±1 hour
-    'threshold_pct': 0.05,        # ±5%
+    'timing_range_hours': 1.0,
+    'threshold_pct': 0.05,
     'respect_market_hours': True
 }
 
 AGGRESSIVE_UNIFORM_PARAMS = {
-    'timing_range_hours': 4.0,   # ±4 hours
-    'threshold_pct': 0.20,        # ±20%
+    'timing_range_hours': 4.0,
+    'threshold_pct': 0.20,
     'respect_market_hours': True
 }
 
 NOCLAMPING_UNIFORM_PARAMS = {
-    'timing_range_hours': 2.0,   # ±2 hours
-    'threshold_pct': 0.10,        # ±10%
-    'respect_market_hours': False  # Allow perturbations outside market hours
+    'timing_range_hours': 2.0,
+    'threshold_pct': 0.10,
+    'respect_market_hours': False
 }
+
+from .baseline import generate_trades as baseline_generate_trades
+
+def generate_trades(prices: pd.DataFrame) -> pd.DataFrame:
+    """
+    Runner entrypoint for policy='uniform_policy'.
+
+    1) Build deterministic baseline schedule.
+    2) Instantiate UniformPolicy with seed from configs/run.yaml.
+    3) Perturb timing and ref_price with IID uniform noise.
+    """
+    if prices is None or len(prices) == 0:
+        return pd.DataFrame(columns=["date", "symbol", "side", "qty", "ref_price"])
+
+    required = {"date", "symbol", "price"}
+    missing = required - set(prices.columns)
+    if missing:
+        raise ValueError(f"uniform_policy.generate_trades: missing columns {missing}")
+
+    # get seed from config
+    try:
+        cfg = yaml.safe_load(Path("configs/run.yaml").read_text())
+        seed = int(cfg.get("seed", 42))
+    except Exception:
+        seed = 42
+
+    # baseline schedule
+    trades = baseline_generate_trades(prices).copy()
+
+    # uniform randomizer
+    policy = UniformPolicy(seed=seed, params=DEFAULT_UNIFORM_PARAMS)
+
+    # perturb timing
+    perturbed_dates = []
+    for ts in trades["date"]:
+        ts_py = pd.to_datetime(ts).to_pydatetime()
+        perturbed_dates.append(policy.perturb_timing(ts_py))
+    trades["date"] = perturbed_dates
+
+    # perturb thresholds via ref_price
+    perturbed_ref = []
+    for p in trades["ref_price"]:
+        perturbed_ref.append(policy.perturb_threshold(float(p)))
+    trades["ref_price"] = perturbed_ref
+
+    return trades
