@@ -18,7 +18,6 @@ from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassif
 from sklearn.metrics import roc_auc_score, classification_report, confusion_matrix
 from sklearn.model_selection import cross_val_score
 from imblearn.over_sampling import SMOTE
-from imblearn.pipeline import Pipeline as ImbPipeline
 from typing import Tuple, Dict, Optional
 import warnings
 warnings.filterwarnings('ignore')
@@ -29,12 +28,6 @@ class P7AdaptiveAdversary:
     Production-grade adversary for 10-minute trade prediction.
     
     Predicts: "Will the next trade happen within 10 minutes?"
-    
-    Features:
-    - SMOTE resampling for imbalanced labels
-    - Cross-validation during training
-    - Enhanced feature engineering
-    - Ensemble of gradient boosting + random forest
     """
     
     def __init__(
@@ -59,8 +52,8 @@ class P7AdaptiveAdversary:
         self.n_cv_folds = n_cv_folds
         self.random_state = random_state
         
-        self.model_gb = None  # Gradient boosting
-        self.model_rf = None  # Random forest
+        self.model_gb = None
+        self.model_rf = None
         self.feature_cols = []
         self.cv_scores = []
         self.feature_importances = {}
@@ -109,7 +102,7 @@ class P7AdaptiveAdversary:
                     .transform(lambda x: x.rolling(window, min_periods=2).std())
                 )
         
-        # Volatility of volatility (VoV)
+        # Volatility of volatility
         df['vol_of_vol'] = (
             df.groupby('symbol')['price_vol_5']
             .transform(lambda x: x.rolling(5, min_periods=2).std())
@@ -118,17 +111,23 @@ class P7AdaptiveAdversary:
         # =====================================================================
         # PRICE LEVEL INDICATORS (Normalized)
         # =====================================================================
-        for window in [5, 10, 20, 50]:
+        for window in [5, 10, 20]:
             # Moving averages
             df[f'price_ma_{window}'] = (
                 df.groupby('symbol')['mid_price']
                 .transform(lambda x: x.rolling(window, min_periods=2).mean())
             )
             
-            # Distance from MA (z-score style)
+            # Compute volatility inline for z-score
+            rolling_vol = (
+                df.groupby('symbol')['price_return_1']
+                .transform(lambda x: x.rolling(window, min_periods=2).std())
+            )
+            
+            # Z-score: distance from MA in standard deviations
             df[f'price_zscore_{window}'] = (
                 (df['mid_price'] - df[f'price_ma_{window}']) / 
-                (df[f'price_vol_{window}'] + 1e-8)
+                (rolling_vol + 1e-8)
             )
         
         # High/Low tracking
@@ -141,7 +140,9 @@ class P7AdaptiveAdversary:
                 df.groupby('symbol')['mid_price']
                 .transform(lambda x: x.rolling(window, min_periods=1).min())
             )
-            df[f'price_range_{window}'] = df[f'price_high_{window}'] - df[f'price_low_{window}']
+            df[f'price_range_{window}'] = (
+                df[f'price_high_{window}'] - df[f'price_low_{window}']
+            )
         
         # =====================================================================
         # TIME FEATURES (Intraday patterns)
@@ -161,7 +162,7 @@ class P7AdaptiveAdversary:
         df['is_monday'] = (df['day_of_week'] == 0).astype(int)
         df['is_friday'] = (df['day_of_week'] == 4).astype(int)
         
-        # Time since market open (approximate)
+        # Minutes since market open (approximate)
         df['minutes_since_open'] = (df['hour'] - 9) * 60 + df['minute']
         
         # =====================================================================
@@ -174,7 +175,7 @@ class P7AdaptiveAdversary:
                 .transform(lambda x: x.rolling(window, min_periods=1).sum())
             )
             
-            # Trade velocity (trades per unit time)
+            # Trade velocity
             df[f'trade_velocity_{window}'] = df[f'trades_last_{window}'] / window
         
         # Time since last trade (in minutes)
@@ -222,8 +223,6 @@ class P7AdaptiveAdversary:
     def create_labels(self, trades_df: pd.DataFrame) -> pd.Series:
         """
         Create labels: Will next trade happen within 10 minutes?
-        
-        This is the CRITICAL prediction for intraday timing.
         """
         df = trades_df.sort_values(['symbol', 'timestamp']).copy()
         
@@ -233,10 +232,8 @@ class P7AdaptiveAdversary:
             .shift(-1) - df['timestamp']
         ).dt.total_seconds() / 60.0
         
-        # Binary label: 1 if next trade within threshold
+        # Binary label
         df['label'] = (df['minutes_to_next'] <= self.threshold_minutes).astype(int)
-        
-        # Last trade per symbol → label as 0
         df['label'] = df['label'].fillna(0).astype(int)
         
         return df['label']
@@ -259,9 +256,6 @@ class P7AdaptiveAdversary:
     def train(self, trades_df: pd.DataFrame, verbose: bool = True) -> Dict:
         """
         Train adversary with advanced techniques.
-        
-        Returns:
-            Training metrics dict
         """
         if verbose:
             print(f"  [Adversary] Training on {len(trades_df)} samples...")
@@ -290,21 +284,19 @@ class P7AdaptiveAdversary:
         if verbose:
             print(f"  [Adversary] Labels → 0: {n_neg}, 1: {n_pos} ({pos_rate:.1f}% positive)")
         
-        # Validation checks
+        # Validation
         if n_pos < 5 or n_neg < 5:
             print(f"  [ERROR] Too few samples in one class!")
-            return {'success': False, 'reason': 'insufficient_samples'}
+            return {'success': False, 'reason': 'insufficient_samples', 'n_samples': len(X), 'n_features': len(self.feature_cols)}
         
-        # Apply SMOTE if enabled and needed
+        # Apply SMOTE if needed
         if self.use_smote and pos_rate < 40:
             if verbose:
-                print(f"  [Adversary] Applying SMOTE resampling (imbalanced: {pos_rate:.1f}%)...")
+                print(f"  [Adversary] Applying SMOTE resampling...")
             
             try:
-                # Only resample to balance classes moderately
-                target_ratio = 0.5  # Aim for 50% positive after resampling
                 smote = SMOTE(
-                    sampling_strategy=target_ratio,
+                    sampling_strategy=0.5,
                     random_state=self.random_state,
                     k_neighbors=min(5, n_pos - 1)
                 )
@@ -312,15 +304,12 @@ class P7AdaptiveAdversary:
                 
                 if verbose:
                     n_pos_new = y.sum()
-                    print(f"  [Adversary] After SMOTE → 0: {len(y) - n_pos_new}, "
-                          f"1: {n_pos_new} ({n_pos_new/len(y)*100:.1f}%)")
+                    print(f"  [Adversary] After SMOTE → 1: {n_pos_new} ({n_pos_new/len(y)*100:.1f}%)")
             except Exception as e:
                 if verbose:
-                    print(f"  [Warning] SMOTE failed: {e}. Continuing without resampling.")
+                    print(f"  [Warning] SMOTE failed: {e}. Continuing without.")
         
-        # =====================================================================
         # Train Gradient Boosting
-        # =====================================================================
         if verbose:
             print(f"  [Adversary] Training Gradient Boosting...")
         
@@ -334,9 +323,7 @@ class P7AdaptiveAdversary:
         )
         self.model_gb.fit(X, y)
         
-        # =====================================================================
-        # Train Random Forest (for ensemble)
-        # =====================================================================
+        # Train Random Forest
         if verbose:
             print(f"  [Adversary] Training Random Forest...")
         
@@ -350,15 +337,12 @@ class P7AdaptiveAdversary:
         )
         self.model_rf.fit(X, y)
         
-        # =====================================================================
-        # Cross-validation (on ORIGINAL unbalanced data)
-        # =====================================================================
+        # Cross-validation
         cv_results = {}
         if self.use_cv:
             if verbose:
-                print(f"  [Adversary] Running {self.n_cv_folds}-fold cross-validation...")
+                print(f"  [Adversary] Running {self.n_cv_folds}-fold CV...")
             
-            # Re-prepare original data for CV
             X_cv = features_df[self.feature_cols].fillna(0).values
             y_cv = features_df['label'].values
             
@@ -418,14 +402,11 @@ class P7AdaptiveAdversary:
     ) -> Dict:
         """
         Evaluate adversary on validation/test data.
-        
-        Returns:
-            Dict with AUC, confusion matrix, and optionally predictions
         """
         if self.model_gb is None or self.model_rf is None:
             if verbose:
                 print("  [ERROR] Models not trained!")
-            return {'auc': 0.50, 'success': False}
+            return {'auc': 0.50, 'success': False, 'n_samples': 0, 'label_distribution': {'positive': 0, 'negative': 0}}
         
         if verbose:
             print(f"  [Adversary] Evaluating on {len(trades_df)} samples...")
@@ -439,7 +420,7 @@ class P7AdaptiveAdversary:
         X = features_df[self.feature_cols].fillna(0).values
         y = labels.values
         
-        # Check label distribution
+        # Check labels
         n_pos = y.sum()
         n_neg = len(y) - n_pos
         
@@ -449,9 +430,15 @@ class P7AdaptiveAdversary:
         if n_pos == 0 or n_neg == 0:
             if verbose:
                 print(f"  [WARNING] All labels same class! Returning AUC=0.50")
-            return {'auc': 0.50, 'success': False, 'reason': 'single_class'}
+            return {
+                'auc': 0.50, 
+                'success': False, 
+                'reason': 'single_class',
+                'n_samples': len(y),
+                'label_distribution': {'positive': int(n_pos), 'negative': int(n_neg)}
+            }
         
-        # Ensemble prediction (average of both models)
+        # Ensemble prediction
         y_pred_gb = self.model_gb.predict_proba(X)[:, 1]
         y_pred_rf = self.model_rf.predict_proba(X)[:, 1]
         y_pred_proba = (y_pred_gb + y_pred_rf) / 2.0
@@ -490,9 +477,7 @@ def time_split_trades(
     val_ratio: float = 0.2
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
-    Split trades chronologically, preserving temporal order.
-    
-    Critical for time-series data to avoid lookahead bias.
+    Split trades chronologically.
     """
     df = trades_df.sort_values('timestamp').reset_index(drop=True)
     
