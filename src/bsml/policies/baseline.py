@@ -1,49 +1,56 @@
+import numpy as np
 import pandas as pd
 
 
 def generate_trades(prices: pd.DataFrame) -> pd.DataFrame:
     """
-    Deterministic baseline schedule.
+    Baseline trading policy.
 
-    Input `prices` schema (from load_prices):
-        - 'date'
-        - 'symbol'
-        - 'price'
-
-    Output `trades` schema (for cost model):
-        - 'date'
-        - 'symbol'
-        - 'side'
-        - 'qty'
-        - 'price'      (used by cost model)
-        - 'ref_price'  (policy-specific reference price)
+    - Input: prices with columns ['date', 'symbol', 'price']
+    - For each symbol & day:
+        * compute daily return
+        * if return >= 0 → BUY (qty = +1)
+        * if return < 0  → SELL (qty = -1)
+    - Output trades DataFrame with:
+        ['date', 'symbol', 'side', 'qty', 'price', 'ref_price']
     """
-    if prices is None or len(prices) == 0:
-        return pd.DataFrame(
-            columns=["date", "symbol", "side", "qty", "price", "ref_price"]
-        )
 
-    required = {"date", "symbol", "price"}
-    missing = required - set(prices.columns)
-    if missing:
-        raise ValueError(f"baseline.generate_trades: missing columns {missing}")
-
+    # Work on a copy and keep only the needed columns
     df = prices.copy()
+    df = df[["date", "symbol", "price"]].copy()
+
+    # Ensure proper types
     df["date"] = pd.to_datetime(df["date"])
+    df["price"] = pd.to_numeric(df["price"], errors="coerce")
 
-    # simple equal-slice execution over the whole horizon
-    n = len(df)
-    total_qty = 100_000.0  # arbitrary total quantity
-    slice_qty = total_qty / n
+    # Drop rows with bad / missing prices
+    df = df.dropna(subset=["price"])
 
+    # Sort by symbol then date
+    df = df.sort_values(["symbol", "date"])
+
+    # Compute daily returns per symbol
+    df["ret"] = df.groupby("symbol")["price"].pct_change()
+
+    # Simple signal:
+    # - First day per symbol: treat as ret = 0 → BUY
+    # - ret >= 0 → BUY (qty = +1)
+    # - ret < 0  → SELL (qty = -1)
+    ret_filled = df["ret"].fillna(0.0)
+    qty = np.where(ret_filled >= 0.0, 1.0, -1.0)
+
+    df["qty"] = qty
+    df["side"] = np.where(df["qty"] > 0, "BUY", "SELL")
+
+    # Build final trades DataFrame
     trades = pd.DataFrame(
         {
             "date": df["date"],
             "symbol": df["symbol"],
-            "side": "BUY",                               # baseline = buy schedule
-            "qty": slice_qty,
-            "price": df["price"].astype(float),          # used by cost model
-            "ref_price": df["price"].astype(float),      # can be perturbed by policies
+            "side": df["side"],
+            "qty": df["qty"].astype(float),
+            "price": df["price"].astype(float),       # used by cost model
+            "ref_price": df["price"].astype(float),   # policies can override this
         }
     )
 

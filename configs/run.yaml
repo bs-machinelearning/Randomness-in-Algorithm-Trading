@@ -1,5 +1,5 @@
 seed: 303
-policy: baseline
+policy: pink
 exposure_diff_pct: null
 output_dir: outputs/runs/latest
 data:
