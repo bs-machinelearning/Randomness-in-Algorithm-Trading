@@ -1,5 +1,5 @@
-seed: 101
-policy: ou
+$1101
+policy: pink
 exposure_diff_pct: null
 output_dir: outputs/runs/latest
 data:
