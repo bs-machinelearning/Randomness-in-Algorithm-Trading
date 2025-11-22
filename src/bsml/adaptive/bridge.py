@@ -1,5 +1,5 @@
 """
-P7 Bridge Module - FIXED VERSION
+P7 Bridge Module - FINAL FIX
 
 Owner: P7
 Week: 4
@@ -7,23 +7,23 @@ Week: 4
 
 import numpy as np
 import pandas as pd
-from typing import Tuple, Optional
 
 
 def prepare_adversary_data(
     trades: pd.DataFrame,
     prices: pd.DataFrame,
     prediction_window_hours: float = 4.0,
-    auto_detect_window: bool = False,
     verbose: bool = False
 ) -> pd.DataFrame:
     """
-    Convert trades to adversary prediction format with proper features.
+    Convert trades to adversary prediction format.
     
-    Prediction task: "Will a trade occur in the next X hours?"
+    Key insight: Look FORWARD from each observation point.
+    We sample observation points at regular intervals (1 hour) to avoid
+    the issue of having a trade at every price timestamp.
     """
     
-    if len(trades) == 0:
+    if len(trades) == 0 or len(prices) == 0:
         return pd.DataFrame()
     
     # Ensure datetime
@@ -32,14 +32,9 @@ def prepare_adversary_data(
     trades['date'] = pd.to_datetime(trades['date'])
     prices['date'] = pd.to_datetime(prices['date'])
     
-    # Sort
     trades = trades.sort_values('date').reset_index(drop=True)
     prices = prices.sort_values(['symbol', 'date']).reset_index(drop=True)
     
-    # Get all unique times from prices (these are our observation points)
-    all_dates = prices[['date']].drop_duplicates().sort_values('date').reset_index(drop=True)
-    
-    # Create observation dataset
     all_obs = []
     
     for symbol in prices['symbol'].unique():
@@ -49,29 +44,40 @@ def prepare_adversary_data(
         if len(symbol_prices) == 0:
             continue
         
-        # For each price observation, create features and label
-        symbol_obs = symbol_prices.copy()
-        symbol_obs['symbol'] = symbol
+        # Create hourly observation grid
+        min_date = symbol_prices['date'].min()
+        max_date = symbol_prices['date'].max()
         
-        # Label: will trade occur in next X hours?
-        symbol_obs['label'] = 0
+        # Sample observations every hour
+        obs_dates = pd.date_range(start=min_date, end=max_date, freq='1H')
         
-        for idx, row in symbol_obs.iterrows():
-            obs_time = row['date']
-            window_end = obs_time + pd.Timedelta(hours=prediction_window_hours)
+        # For each observation time, get nearest price data for features
+        obs_data = []
+        for obs_time in obs_dates:
+            # Get nearest price before or at obs_time
+            prior_prices = symbol_prices[symbol_prices['date'] <= obs_time]
+            if len(prior_prices) == 0:
+                continue
             
-            # Check if any trade occurs in (obs_time, window_end]
-            # Note: EXCLUSIVE of obs_time, so we look forward
+            nearest_price = prior_prices.iloc[-1].copy()
+            
+            # Label: will trade occur in (obs_time, obs_time + window]?
+            window_end = obs_time + pd.Timedelta(hours=prediction_window_hours)
             trades_in_window = symbol_trades[
                 (symbol_trades['date'] > obs_time) & 
                 (symbol_trades['date'] <= window_end)
             ]
             
-            if len(trades_in_window) > 0:
-                symbol_obs.at[idx, 'label'] = 1
+            obs_row = nearest_price.to_dict()
+            obs_row['date'] = obs_time
+            obs_row['label'] = 1 if len(trades_in_window) > 0 else 0
+            obs_row['signal'] = obs_row['label']
+            
+            obs_data.append(obs_row)
         
-        symbol_obs['signal'] = symbol_obs['label']
-        all_obs.append(symbol_obs)
+        if obs_data:
+            symbol_df = pd.DataFrame(obs_data)
+            all_obs.append(symbol_df)
     
     if len(all_obs) == 0:
         return pd.DataFrame()
@@ -85,11 +91,7 @@ def prepare_adversary_data(
         print(f"[Bridge] Positive (trade within {prediction_window_hours:.1f}h): {n_positive} ({n_positive/n_total*100:.1f}%)")
         print(f"[Bridge] Negative (no trade): {n_total - n_positive} ({(n_total-n_positive)/n_total*100:.1f}%)")
         
-        # Show available features
         feature_cols = [c for c in result.columns if c not in ['date', 'symbol', 'label', 'signal', 'price']]
-        if len(feature_cols) > 0:
-            print(f"[Bridge] Available features: {len(feature_cols)} → {feature_cols[:5]}...")
-        else:
-            print(f"[Bridge] ⚠️ WARNING: No features found! Only columns: {list(result.columns)}")
+        print(f"[Bridge] Features: {len(feature_cols)}")
     
     return result
