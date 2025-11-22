@@ -73,6 +73,16 @@ def enrich_with_price_features(signals_df: pd.DataFrame, prices_df: pd.DataFrame
     """
     enriched_list = []
     
+    # Detect price column name
+    price_col = None
+    for col in ['close', 'price', 'adj_close', 'Close']:
+        if col in prices_df.columns:
+            price_col = col
+            break
+    
+    if price_col is None:
+        raise ValueError(f"No price column found in prices_df. Available columns: {list(prices_df.columns)}")
+    
     for symbol in signals_df['symbol'].unique():
         # Filter data for this symbol
         symbol_signals = signals_df[signals_df['symbol'] == symbol].copy()
@@ -80,29 +90,32 @@ def enrich_with_price_features(signals_df: pd.DataFrame, prices_df: pd.DataFrame
         
         # Merge prices
         symbol_data = symbol_signals.merge(
-            symbol_prices[['date', 'close']], 
+            symbol_prices[['date', price_col]], 
             on='date', 
             how='left'
         )
+        
+        # Rename to standard 'price' column
+        symbol_data.rename(columns={price_col: 'price'}, inplace=True)
         
         # Sort by date
         symbol_data = symbol_data.sort_values('date')
         
         # Price momentum features
-        symbol_data['mom_5d'] = symbol_data['close'].pct_change(5)
-        symbol_data['mom_10d'] = symbol_data['close'].pct_change(10)
-        symbol_data['mom_20d'] = symbol_data['close'].pct_change(20)
+        symbol_data['mom_5d'] = symbol_data['price'].pct_change(5)
+        symbol_data['mom_10d'] = symbol_data['price'].pct_change(10)
+        symbol_data['mom_20d'] = symbol_data['price'].pct_change(20)
         
         # Volatility features
-        returns = symbol_data['close'].pct_change()
+        returns = symbol_data['price'].pct_change()
         symbol_data['vol_10d'] = returns.rolling(10).std() * np.sqrt(252)
         symbol_data['vol_30d'] = returns.rolling(30).std() * np.sqrt(252)
         symbol_data['vol_60d'] = returns.rolling(60).std() * np.sqrt(252)
         
         # Price level features
-        symbol_data['price_ma_20'] = symbol_data['close'].rolling(20).mean()
-        symbol_data['price_ma_50'] = symbol_data['close'].rolling(50).mean()
-        symbol_data['price_vs_ma20'] = symbol_data['close'] / symbol_data['price_ma_20']
+        symbol_data['price_ma_20'] = symbol_data['price'].rolling(20).mean()
+        symbol_data['price_ma_50'] = symbol_data['price'].rolling(50).mean()
+        symbol_data['price_vs_ma20'] = symbol_data['price'] / (symbol_data['price_ma_20'] + 1e-8)
         
         # Signal history (lagged)
         symbol_data['signal_lag1'] = symbol_data['signal'].shift(1)
