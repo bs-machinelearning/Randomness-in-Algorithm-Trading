@@ -21,7 +21,7 @@ from sklearn.metrics import roc_auc_score
 from imblearn.over_sampling import SMOTE
 
 from bsml.data.loader import load_prices
-from bsml.policies.baseline import BaselinePolicy
+from bsml.policies.baseline import generate_trades as generate_baseline_trades  # FIXED
 from bsml.adaptive.bridge import prepare_adversary_data, time_split_data
 
 
@@ -264,8 +264,7 @@ def main():
     print(f"  ✓ {len(prices)} rows, {prices['symbol'].nunique()} symbols")
     
     print("\n[2/4] Generating baseline trades...")
-    baseline_policy = BaselinePolicy(seed=42)
-    baseline_trades = baseline_policy.generate_trades(prices)
+    baseline_trades = generate_baseline_trades(prices)  # FIXED
     print(f"  ✓ {len(baseline_trades)} trades")
     
     print("\n[3/4] Preparing data...")
