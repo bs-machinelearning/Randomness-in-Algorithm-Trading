@@ -1,7 +1,8 @@
 """
-P7 Adaptive Adversary Classifier
+P7 Adaptive Adversary Classifier - STRENGTHENED VERSION
 
-Prediction task: "Will a trade occur tomorrow?
+Prediction task: "Will a trade occur tomorrow?"
+Improvements: 3 models, stronger hyperparameters, weighted ensemble
 
 Owner: P7
 Week: 3
@@ -9,8 +10,8 @@ Week: 3
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
-from sklearn.metrics import roc_auc_score, precision_recall_curve, auc
+from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier, ExtraTreesClassifier
+from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import cross_val_score
 from imblearn.over_sampling import SMOTE
 from typing import Dict, Tuple
@@ -20,20 +21,18 @@ warnings.filterwarnings('ignore')
 
 class P7AdaptiveAdversary:
     """
-    
-    Predicts: "Will a trade occur in the next period (tomorrow)?"
-    
-    This is a HARD task because:
-    - Requires predicting momentum reversals
-    - Tests if randomization hides decision patterns
-    - Not just calendar prediction
+    STRENGTHENED adversary with:
+    - 3 models (GB + RF + ExtraTrees)
+    - Better hyperparameters
+    - Weighted ensemble
+    - 5-fold CV
     """
     
     def __init__(
         self,
         use_smote: bool = True,
         use_cv: bool = True,
-        n_cv_folds: int = 3,
+        n_cv_folds: int = 5,
         random_state: int = 42
     ):
         """
@@ -50,13 +49,14 @@ class P7AdaptiveAdversary:
         
         self.model_gb = None
         self.model_rf = None
+        self.model_et = None
         self.feature_cols = None
         self.cv_scores = []
         
     def _select_features(self, df: pd.DataFrame) -> list:
         """Select feature columns"""
         exclude = {
-            'date', 'symbol', 'signal', 'label', 'close'
+            'date', 'symbol', 'signal', 'label', 'price'
         }
         
         feature_cols = [
@@ -67,30 +67,18 @@ class P7AdaptiveAdversary:
         return feature_cols
     
     def train(self, data_df: pd.DataFrame, verbose: bool = True) -> Dict:
-        """
-        Train adversary on enriched data.
-        
-        Args:
-            data_df: Output from prepare_adversary_data()
-            verbose: Print logs
-        
-        Returns:
-            Training metrics
-        """
+        """Train STRENGTHENED adversary with 3 models"""
         if verbose:
-            print(f"  [Adversary] Training on {len(data_df)} samples...")
+            print(f"  [Adversary] Training STRENGTHENED classifier on {len(data_df)} samples...")
         
-        # Select features
         self.feature_cols = self._select_features(data_df)
         
         if verbose:
             print(f"  [Adversary] Using {len(self.feature_cols)} features")
         
-        # Prepare data
         X = data_df[self.feature_cols].fillna(0).values
         y = data_df['label'].values
         
-        # Check labels
         n_pos = y.sum()
         n_neg = len(y) - n_pos
         pos_rate = n_pos / len(y)
@@ -98,7 +86,6 @@ class P7AdaptiveAdversary:
         if verbose:
             print(f"  [Adversary] Labels → 0: {n_neg}, 1: {n_pos} ({pos_rate*100:.1f}% positive)")
         
-        # Validate
         if n_pos < 10 or n_neg < 10:
             return {
                 'success': False,
@@ -108,8 +95,8 @@ class P7AdaptiveAdversary:
                 'label_distribution': {'positive': int(n_pos), 'negative': int(n_neg)}
             }
         
-        # Apply SMOTE if imbalanced
-        if self.use_smote and (pos_rate < 0.3 or pos_rate > 0.7):
+        # SMOTE
+        if self.use_smote and (pos_rate < 0.4 or pos_rate > 0.6):
             if verbose:
                 print(f"  [Adversary] Applying SMOTE...")
             
@@ -122,35 +109,56 @@ class P7AdaptiveAdversary:
                 X, y = smote.fit_resample(X, y)
                 
                 if verbose:
-                    print(f"  [Adversary] After SMOTE → 1: {y.sum()} ({y.sum()/len(y)*100:.1f}%)")
+                    print(f"  [Adversary] After SMOTE → {y.sum()} positive ({y.sum()/len(y)*100:.1f}%)")
             except Exception as e:
                 if verbose:
                     print(f"  [Warning] SMOTE failed: {e}")
         
-        # Train Gradient Boosting (P6-style)
+        # Model 1: Gradient Boosting (STRONGER)
         if verbose:
-            print(f"  [Adversary] Training Gradient Boosting...")
+            print(f"  [Adversary] Training Gradient Boosting (200 trees, depth 6)...")
         
         self.model_gb = GradientBoostingClassifier(
-            n_estimators=100,
-            learning_rate=0.1,
-            max_depth=5,
+            n_estimators=200,
+            learning_rate=0.05,
+            max_depth=6,
+            min_samples_split=10,
+            min_samples_leaf=5,
+            subsample=0.8,
             random_state=self.random_state
         )
         self.model_gb.fit(X, y)
         
-        # Train Random Forest (ensemble)
+        # Model 2: Random Forest (STRONGER)
         if verbose:
-            print(f"  [Adversary] Training Random Forest...")
+            print(f"  [Adversary] Training Random Forest (200 trees, depth 10)...")
         
         self.model_rf = RandomForestClassifier(
-            n_estimators=100,
-            max_depth=8,
-            min_samples_leaf=20,
+            n_estimators=200,
+            max_depth=10,
+            min_samples_leaf=10,
+            max_features='sqrt',
+            bootstrap=True,
+            oob_score=True,
             random_state=self.random_state,
             n_jobs=-1
         )
         self.model_rf.fit(X, y)
+        
+        # Model 3: Extra Trees (NEW)
+        if verbose:
+            print(f"  [Adversary] Training Extra Trees (200 trees, depth 10)...")
+        
+        self.model_et = ExtraTreesClassifier(
+            n_estimators=200,
+            max_depth=10,
+            min_samples_leaf=10,
+            max_features='sqrt',
+            bootstrap=False,
+            random_state=self.random_state,
+            n_jobs=-1
+        )
+        self.model_et.fit(X, y)
         
         # Cross-validation
         cv_results = {}
@@ -193,13 +201,8 @@ class P7AdaptiveAdversary:
         }
     
     def evaluate(self, data_df: pd.DataFrame, verbose: bool = True) -> Dict:
-        """
-        Evaluate adversary on validation data.
-        
-        Returns:
-            Dict with AUC and metrics
-        """
-        if self.model_gb is None or self.model_rf is None:
+        """Evaluate with 3-model weighted ensemble"""
+        if self.model_gb is None or self.model_rf is None or self.model_et is None:
             if verbose:
                 print("  [ERROR] Models not trained!")
             return {
@@ -210,9 +213,8 @@ class P7AdaptiveAdversary:
             }
         
         if verbose:
-            print(f"  [Adversary] Evaluating on {len(data_df)} samples...")
+            print(f"  [Adversary] Evaluating (3-model ensemble)...")
         
-        # Prepare data
         X = data_df[self.feature_cols].fillna(0).values
         y = data_df['label'].values
         
@@ -235,13 +237,19 @@ class P7AdaptiveAdversary:
         # Ensemble prediction
         y_pred_gb = self.model_gb.predict_proba(X)[:, 1]
         y_pred_rf = self.model_rf.predict_proba(X)[:, 1]
-        y_pred_proba = (y_pred_gb + y_pred_rf) / 2.0
+        y_pred_et = self.model_et.predict_proba(X)[:, 1]
         
-        # AUC
+        # Weighted average (GB=40%, RF=30%, ET=30%)
+        y_pred_proba = 0.4 * y_pred_gb + 0.3 * y_pred_rf + 0.3 * y_pred_et
+        
         auc_score = roc_auc_score(y, y_pred_proba)
         
         if verbose:
-            print(f"  [Adversary] AUC = {auc_score:.4f}")
+            auc_gb = roc_auc_score(y, y_pred_gb)
+            auc_rf = roc_auc_score(y, y_pred_rf)
+            auc_et = roc_auc_score(y, y_pred_et)
+            print(f"  [Adversary] Individual: GB={auc_gb:.4f}, RF={auc_rf:.4f}, ET={auc_et:.4f}")
+            print(f"  [Adversary] Ensemble AUC = {auc_score:.4f}")
         
         return {
             'auc': float(auc_score),
@@ -252,12 +260,7 @@ class P7AdaptiveAdversary:
 
 
 def time_split_data(data_df: pd.DataFrame, train_ratio: float = 0.6, val_ratio: float = 0.2) -> Tuple:
-    """
-    Chronological split for time-series data.
-    
-    Returns:
-        (train_df, val_df, test_df)
-    """
+    """Chronological split"""
     df = data_df.sort_values('date').reset_index(drop=True)
     
     n = len(df)
