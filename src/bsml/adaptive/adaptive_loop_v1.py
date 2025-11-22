@@ -1,8 +1,8 @@
 """
-P7 Adaptive Adversary Framework - P6-Style Task
+P7 Adaptive Adversary Framework - STRENGTHENED VERSION
 
 Prediction: "Will a trade occur tomorrow?"
-Adaptive: Adjusts randomization parameters based on predictability
+Strengthened: 3 models, 5-fold CV, weighted ensemble
 
 Owner: P7
 Week: 3
@@ -24,40 +24,33 @@ from bsml.adaptive.adversary_classifier import P7AdaptiveAdversary, time_split_d
 class AdaptiveConfig:
     """Configuration for adaptive training loop"""
     
-    # AUC thresholds
     AUC_HIGH_THRESHOLD = 0.75
     AUC_LOW_THRESHOLD = 0.55
     AUC_TARGET_MIN = 0.60
     AUC_TARGET_MAX = 0.70
     AUC_TARGET_MID = 0.65
     
-    # Adjustment factors
     FACTOR_INCREASE = 1.20
     FACTOR_DECREASE = 0.80
     FACTOR_NUDGE = 1.10
     
-    # Loop parameters
     MAX_ITERATIONS = 10
     CONVERGENCE_PATIENCE = 3
     MIN_VAL_SAMPLES = 100
     
-    # Adversary parameters
     USE_SMOTE = True
     USE_CV = True
-    N_CV_FOLDS = 3
+    N_CV_FOLDS = 5  # Increased from 3
     
-    # Data split ratios
     TRAIN_RATIO = 0.6
     VAL_RATIO = 0.2
     TEST_RATIO = 0.2
     
-    # Parameter bounds
     PRICE_NOISE_MIN = 0.001
     PRICE_NOISE_MAX = 0.25
     TIME_NOISE_MIN = 1
     TIME_NOISE_MAX = 240
     
-    # Output
     OUTPUT_DIR = Path("outputs/adaptive_runs/uniform_pilot")
 
 
@@ -109,7 +102,6 @@ class IterationLogger:
                      train_metrics, val_metrics, cv_scores=None):
         """Log iteration metrics"""
         
-        # Safe CV score handling
         cv_mean = None
         cv_std = None
         if cv_scores is not None:
@@ -173,6 +165,7 @@ class IterationLogger:
         summary = {
             'metadata': {
                 'task': 'predict_next_day_trade',
+                'classifier': 'strengthened_3model_ensemble',
                 'start_time': self.start_time.isoformat(),
                 'end_time': datetime.now().isoformat(),
                 'duration_minutes': (datetime.now() - self.start_time).total_seconds() / 60,
@@ -202,21 +195,8 @@ def adaptive_training_loop(
     seed: int = 42,
     verbose: bool = True
 ) -> Dict:
-    """
-    Adaptive training loop with P6-style task.
+    """Adaptive training loop with STRENGTHENED classifier"""
     
-    Task: Predict "Will a trade occur tomorrow?"
-    
-    Args:
-        prices_df: Price data
-        initial_params: Starting policy parameters
-        config: Configuration
-        seed: Random seed
-        verbose: Print logs
-    
-    Returns:
-        Dict with results
-    """
     if config is None:
         config = AdaptiveConfig()
     
@@ -232,9 +212,10 @@ def adaptive_training_loop(
     
     if verbose:
         print("\n" + "="*80)
-        print("P7 ADAPTIVE ADVERSARY TRAINING LOOP (P6-STYLE TASK)")
+        print("P7 ADAPTIVE ADVERSARY - STRENGTHENED VERSION")
         print("="*80)
         print(f"Task: Predict 'Will a trade occur tomorrow?'")
+        print(f"Classifier: 3-model ensemble (GB + RF + ExtraTrees)")
         print(f"Max iterations: {config.MAX_ITERATIONS}")
         print(f"Convergence patience: {config.CONVERGENCE_PATIENCE}")
         print(f"AUC target: [{config.AUC_TARGET_MIN}, {config.AUC_TARGET_MAX}]")
@@ -249,26 +230,23 @@ def adaptive_training_loop(
             print("="*80)
         
         try:
-            # Generate trades
             if verbose:
                 print("[1/5] Generating trades...")
             trades = policy.generate_trades(prices_df)
             if len(trades) == 0:
-                print("  ✗ No trades generated!")
+                print("  ✗ No trades!")
                 break
             if verbose:
                 print(f"  → {len(trades)} trades")
             
-            # Prepare adversary data (P6-style)
             if verbose:
-                print("[2/5] Preparing adversary data (daily signals + features)...")
+                print("[2/5] Preparing adversary data...")
             adversary_data = prepare_adversary_data(trades, prices_df)
             if verbose:
-                print(f"  → {len(adversary_data)} daily observations")
+                print(f"  → {len(adversary_data)} observations")
                 n_trade_days = adversary_data['signal'].sum()
-                print(f"  → {n_trade_days} days with trades ({n_trade_days/len(adversary_data)*100:.1f}%)")
+                print(f"  → {n_trade_days} trade days ({n_trade_days/len(adversary_data)*100:.1f}%)")
             
-            # Split data
             if verbose:
                 print("[3/5] Splitting data...")
             train, val, test = time_split_data(adversary_data, config.TRAIN_RATIO, config.VAL_RATIO)
@@ -276,10 +254,9 @@ def adaptive_training_loop(
                 print(f"  → Train: {len(train)}, Val: {len(val)}, Test: {len(test)}")
             
             if len(val) < config.MIN_VAL_SAMPLES:
-                print(f"  ✗ Validation set too small ({len(val)} < {config.MIN_VAL_SAMPLES})")
+                print(f"  ✗ Val set too small ({len(val)})")
                 break
             
-            # Train adversary
             if verbose:
                 print("[4/5] Training adversary...")
             
@@ -292,12 +269,11 @@ def adaptive_training_loop(
             
             train_metrics = adversary.train(train, verbose=verbose)
             if not train_metrics.get('success', False):
-                print(f"  ✗ Training failed: {train_metrics.get('reason', 'unknown')}")
+                print(f"  ✗ Training failed: {train_metrics.get('reason')}")
                 break
             
-            # Evaluate
             if verbose:
-                print("[5/5] Evaluating on validation...")
+                print("[5/5] Evaluating...")
             
             val_metrics = adversary.evaluate(val, verbose=verbose)
             if not val_metrics.get('success', False):
@@ -306,7 +282,6 @@ def adaptive_training_loop(
             
             auc = val_metrics['auc']
             
-            # Decision
             action, multiplier, reason = decide_adjustment(auc, config)
             
             if verbose:
@@ -314,20 +289,17 @@ def adaptive_training_loop(
                 print(f"RESULT: AUC = {auc:.4f}")
                 print(f"ACTION: {action}")
                 print(f"REASON: {reason}")
-                print(f"MULTIPLIER: {multiplier:.2f}")
             
-            # Log
             logger.log_iteration(
                 iter_num, params, auc, action, multiplier, reason,
                 train_metrics, val_metrics,
                 adversary.cv_scores if hasattr(adversary, 'cv_scores') else None
             )
             
-            # Convergence check
             if action == 'HOLD':
                 hold_count += 1
                 if verbose:
-                    print(f"✓ In target range ({hold_count}/{config.CONVERGENCE_PATIENCE})")
+                    print(f"✓ In target ({hold_count}/{config.CONVERGENCE_PATIENCE})")
                 
                 if hold_count >= config.CONVERGENCE_PATIENCE:
                     converged = True
@@ -340,17 +312,16 @@ def adaptive_training_loop(
                 policy = UniformPolicy(params=params, seed=seed)
                 
                 if verbose:
-                    print(f"\nParameter adjustment:")
+                    print(f"\nAdjustment:")
                     print(f"  price_noise: {params['price_noise']:.4f}")
                     print(f"  time_noise: {params['time_noise_minutes']:.1f} min")
         
         except Exception as e:
-            print(f"\n✗ ERROR in iteration {iter_num}: {e}")
+            print(f"\n✗ ERROR: {e}")
             import traceback
             traceback.print_exc()
             break
     
-    # Summary
     if verbose:
         logger.print_summary()
         
@@ -358,12 +329,10 @@ def adaptive_training_loop(
         print("FINAL STATUS")
         print("="*80)
         print(f"Converged: {converged}")
-        print(f"Total iterations: {len(logger.iterations)}")
+        print(f"Iterations: {len(logger.iterations)}")
         if logger.iterations:
             print(f"Final AUC: {logger.iterations[-1]['auc_val']:.4f}")
-            print(f"Final params:")
-            print(f"  price_noise: {params['price_noise']:.4f}")
-            print(f"  time_noise: {params['time_noise_minutes']:.1f} min")
+            print(f"Final params: price_noise={params['price_noise']:.4f}, time_noise={params['time_noise_minutes']:.1f}min")
     
     return {
         'logger': logger,
@@ -376,54 +345,42 @@ def adaptive_training_loop(
 def main():
     """Main entry point"""
     print("="*80)
-    print("P7 WEEK 3 PILOT: ADAPTIVE ADVERSARY (P6-STYLE TASK)")
+    print("P7 WEEK 3 PILOT: STRENGTHENED ADAPTIVE ADVERSARY")
     print("="*80)
     print(f"Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("\nTask: Predict whether a trade will occur in the next day")
-    print("Difficulty: HARD (requires predicting momentum reversals)")
+    print("\nClassifier: 3-model ensemble (GB + RF + ExtraTrees)")
+    print("Task: Predict next-day trade occurrence")
     
     config = AdaptiveConfig()
     
-    # Load data
-    print("\n[1/3] Loading price data...")
+    print("\n[1/3] Loading data...")
     try:
         prices = load_prices("data/ALL_backtest.csv")
-        print(f"  ✓ Loaded {len(prices)} rows")
-        print(f"  ✓ Symbols: {prices['symbol'].nunique()}")
-        print(f"  ✓ Date range: {prices['date'].min()} to {prices['date'].max()}")
+        print(f"  ✓ {len(prices)} rows, {prices['symbol'].nunique()} symbols")
     except Exception as e:
         print(f"  ✗ ERROR: {e}")
         return
     
-    # Run adaptive loop
-    print("\n[2/3] Running adaptive training loop...")
+    print("\n[2/3] Running adaptive loop...")
     try:
-        results = adaptive_training_loop(
-            prices,
-            initial_params=DEFAULT_UNIFORM_PARAMS,
-            config=config,
-            seed=42,
-            verbose=True
-        )
+        results = adaptive_training_loop(prices, config=config, seed=42, verbose=True)
     except Exception as e:
-        print(f"\n✗ FATAL ERROR: {e}")
+        print(f"\n✗ FATAL: {e}")
         import traceback
         traceback.print_exc()
         return
     
-    # Save results
     print("\n[3/3] Saving results...")
     try:
         results['logger'].save_results(config.OUTPUT_DIR)
     except Exception as e:
-        print(f"  ✗ ERROR saving: {e}")
+        print(f"  ✗ ERROR: {e}")
     
-    # Final summary
     print("\n" + "="*80)
     if results['converged']:
-        print("✅ WEEK 3 PILOT COMPLETE - CONVERGED")
+        print("✅ CONVERGED")
     else:
-        print("✅ WEEK 3 PILOT COMPLETE - MAX ITERATIONS REACHED")
+        print("✅ MAX ITERATIONS")
     print("="*80)
     print(f"Finished: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
@@ -432,18 +389,11 @@ def main():
         print(f"\nFinal AUC: {final_auc:.4f}")
         
         if final_auc > 0.75:
-            print("\n⚠️  HIGH PREDICTABILITY")
-            print(f"   → Adversary predicts trades with {final_auc*100:.1f}% accuracy")
-            print(f"   → Randomization insufficient")
-            print(f"   → Need more aggressive noise or different policy (OU/Pink)")
+            print("⚠️  HIGH PREDICTABILITY - Need more randomization")
         elif final_auc < 0.55:
-            print("\n⚠️  TOO RANDOM")
-            print(f"   → Strategy may be destroying signal")
-            print(f"   → Consider reducing randomization")
+            print("⚠️  TOO RANDOM - Reducing signal quality")
         else:
-            print("\n✓ GOOD BALANCE")
-            print(f"   → Predictability in target range")
-            print(f"   → Randomization is effective")
+            print("✓ GOOD BALANCE - Effective randomization")
 
 
 if __name__ == "__main__":
