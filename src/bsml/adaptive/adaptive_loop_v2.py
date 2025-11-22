@@ -58,9 +58,7 @@ class AdaptiveConfig:
     TEST_RATIO = 0.2
     
     # Prediction task configuration
-    PREDICTION_WINDOW_HOURS = 4.0  # "Will trade occur in next 4 hours?"
-    AUTO_DETECT_WINDOW = False      # Set to True to auto-detect optimal window
-    
+    PREDICTION_WINDOW_HOURS = 4.0  # "Will trade occur in next 4 hours?   
     # Policy-specific parameter bounds
     # Uniform
     UNIFORM_PRICE_NOISE_MIN = 0.001
@@ -387,7 +385,6 @@ def adaptive_training_loop(
                 trades, 
                 prices_df,
                 prediction_window_hours=config.PREDICTION_WINDOW_HOURS,
-                auto_detect_window=config.AUTO_DETECT_WINDOW,
                 verbose=verbose
             )
             
