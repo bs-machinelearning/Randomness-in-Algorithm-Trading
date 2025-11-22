@@ -21,8 +21,8 @@ from sklearn.metrics import roc_auc_score
 from imblearn.over_sampling import SMOTE
 
 from bsml.data.loader import load_prices
-from bsml.policies.baseline import generate_trades as generate_baseline_trades  # FIXED
-from bsml.adaptive.bridge import prepare_adversary_data, time_split_data
+from bsml.policies.baseline import generate_trades as generate_baseline_trades
+from bsml.adaptive.master_bridge import prepare_adversary_data, time_split_data  # NEW IMPORT
 
 
 class MasterAdversary:
@@ -264,7 +264,7 @@ def main():
     print(f"  ✓ {len(prices)} rows, {prices['symbol'].nunique()} symbols")
     
     print("\n[2/4] Generating baseline trades...")
-    baseline_trades = generate_baseline_trades(prices)  # FIXED
+    baseline_trades = generate_baseline_trades(prices)
     print(f"  ✓ {len(baseline_trades)} trades")
     
     print("\n[3/4] Preparing data...")
