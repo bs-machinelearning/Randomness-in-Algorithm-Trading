@@ -1,7 +1,12 @@
 """
-P7 Adaptive Adversary Framework - POLICY-AGNOSTIC VERSION (V2) - FIXED
+P7 Adaptive Adversary Framework - POLICY-AGNOSTIC VERSION (V2)
 
-Supports multiple randomization policies with proper initialization
+Supports multiple randomization policies:
+- Uniform: independent noise
+- Pink: correlated low-frequency noise  
+- OU: mean-reverting noise
+
+Prediction task: "Will a trade occur in the next 4 hours?"
 
 Owner: P7
 Week: 4
@@ -25,7 +30,7 @@ from bsml.adaptive.adversary_classifier import P7AdaptiveAdversary, time_split_d
 class AdaptiveConfig:
     """Configuration for adaptive training loop"""
     
-    # AUC thresholds
+    # AUC thresholds (same for all policies)
     AUC_HIGH_THRESHOLD = 0.60
     AUC_LOW_THRESHOLD = 0.50
     AUC_TARGET_MIN = 0.50
@@ -51,6 +56,10 @@ class AdaptiveConfig:
     TRAIN_RATIO = 0.6
     VAL_RATIO = 0.2
     TEST_RATIO = 0.2
+    
+    # Prediction task configuration
+    PREDICTION_WINDOW_HOURS = 4.0  # "Will trade occur in next 4 hours?"
+    AUTO_DETECT_WINDOW = False      # Set to True to auto-detect optimal window
     
     # Policy-specific parameter bounds
     # Uniform
@@ -277,7 +286,7 @@ class IterationLogger:
         summary = {
             'metadata': {
                 'policy': self.policy_name,
-                'task': 'predict_next_day_trade',
+                'task': 'predict_trade_in_4h_window',
                 'classifier': 'strengthened_3model_ensemble',
                 'start_time': self.start_time.isoformat(),
                 'end_time': datetime.now().isoformat(),
@@ -347,7 +356,7 @@ def adaptive_training_loop(
         print(f"P7 ADAPTIVE ADVERSARY - {policy_info['display_name'].upper()}")
         print("="*80)
         print(f"Description: {policy_info['description']}")
-        print(f"Task: Predict 'Will a trade occur tomorrow?'")
+        print(f"Task: Predict 'Will a trade occur in the next {config.PREDICTION_WINDOW_HOURS}h?'")
         print(f"Classifier: 3-model ensemble (GB + RF + ExtraTrees)")
         print(f"Max iterations: {config.MAX_ITERATIONS}")
         print(f"AUC target: [{config.AUC_TARGET_MIN}, {config.AUC_TARGET_MAX}]")
@@ -372,21 +381,28 @@ def adaptive_training_loop(
                 print(f"  → {len(trades)} trades")
             
             if verbose:
-                print("[2/5] Preparing adversary data...")
-            adversary_data = prepare_adversary_data(trades, prices_df)
+                print(f"[2/5] Preparing adversary data (window={config.PREDICTION_WINDOW_HOURS}h)...")
             
-            # CRITICAL FIX: Check label distribution
-            n_trade_days = adversary_data['signal'].sum()
-            n_no_trade_days = len(adversary_data) - n_trade_days
+            adversary_data = prepare_adversary_data(
+                trades, 
+                prices_df,
+                prediction_window_hours=config.PREDICTION_WINDOW_HOURS,
+                auto_detect_window=config.AUTO_DETECT_WINDOW,
+                verbose=verbose
+            )
+            
+            # Check label distribution
+            n_trade_windows = adversary_data['signal'].sum()
+            n_no_trade_windows = len(adversary_data) - n_trade_windows
             
             if verbose:
                 print(f"  → {len(adversary_data)} observations")
-                print(f"  → Trade days: {n_trade_days} ({n_trade_days/len(adversary_data)*100:.1f}%)")
-                print(f"  → No-trade days: {n_no_trade_days} ({n_no_trade_days/len(adversary_data)*100:.1f}%)")
+                print(f"  → Trade within {config.PREDICTION_WINDOW_HOURS}h: {n_trade_windows} ({n_trade_windows/len(adversary_data)*100:.1f}%)")
+                print(f"  → No trade: {n_no_trade_windows} ({n_no_trade_windows/len(adversary_data)*100:.1f}%)")
             
-            # CRITICAL: If all days have trades, the adversary task is trivial
-            if n_no_trade_days == 0:
-                print(f"\n⚠️  WARNING: Policy generates trades EVERY day!")
+            # CRITICAL: Check if task is meaningful
+            if n_no_trade_windows == 0:
+                print(f"\n⚠️  WARNING: Policy generates trades in EVERY {config.PREDICTION_WINDOW_HOURS}h window!")
                 print(f"  → Adversary prediction task is trivial (no negative class)")
                 print(f"  → This policy provides NO unpredictability")
                 print(f"  → Skipping adversary training")
@@ -394,14 +410,18 @@ def adaptive_training_loop(
                 # Log the issue
                 logger.log_iteration(
                     iter_num, params, 1.0, 'SKIP', 1.0, 
-                    'All days have trades - trivial prediction',
+                    f'All windows have trades - trivial prediction',
                     {'success': False, 'n_samples': 0, 'n_features': 0, 
-                     'label_distribution': {'positive': n_trade_days, 'negative': 0}},
+                     'label_distribution': {'positive': n_trade_windows, 'negative': 0}},
                     {'success': False, 'n_samples': 0, 
                      'label_distribution': {'positive': 0, 'negative': 0}},
                     None
                 )
                 break
+            
+            if n_no_trade_windows < 10:
+                print(f"\n⚠️  WARNING: Very few negative samples ({n_no_trade_windows})")
+                print(f"  → Prediction task may be too easy")
             
             if verbose:
                 print("[3/5] Splitting data...")
