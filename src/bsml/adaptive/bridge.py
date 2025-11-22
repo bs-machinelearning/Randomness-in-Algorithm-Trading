@@ -18,37 +18,39 @@ def trades_to_daily_signals(trades_df: pd.DataFrame, prices_df: pd.DataFrame) ->
     For each date and symbol:
     - signal = 1 if trade occurred
     - signal = 0 if no trade occurred
-    
-    Args:
-        trades_df: Trade records with columns [date/timestamp, symbol, side, qty, price]
-        prices_df: Full price history (daily)
-    
-    Returns:
-        DataFrame with columns [date, symbol, signal]
     """
-    # Ensure datetime
-    if 'date' in trades_df.columns:
-        trades_df = trades_df.copy()
-        trades_df['date'] = pd.to_datetime(trades_df['date'])
-    elif 'timestamp' in trades_df.columns:
-        trades_df = trades_df.copy()
-        trades_df['date'] = pd.to_datetime(trades_df['timestamp']).dt.date
-        trades_df['date'] = pd.to_datetime(trades_df['date'])
+    # Normalize trades to date only (remove time component)
+    trades_clean = trades_df.copy()
     
-    # Mark days with trades
-    trades_df['signal'] = 1
-    trade_signals = trades_df.groupby(['date', 'symbol'])['signal'].max().reset_index()
+    if 'timestamp' in trades_clean.columns:
+        trades_clean['date'] = pd.to_datetime(trades_clean['timestamp']).dt.date
+    elif 'date' in trades_clean.columns:
+        trades_clean['date'] = pd.to_datetime(trades_clean['date']).dt.date
+    else:
+        raise ValueError("No date/timestamp column in trades")
+    
+    # Convert to datetime for consistency
+    trades_clean['date'] = pd.to_datetime(trades_clean['date'])
+    
+    # Mark days with trades (1 = trade occurred)
+    trades_clean['signal'] = 1
+    trade_signals = trades_clean.groupby(['date', 'symbol'])['signal'].max().reset_index()
+    
+    # Normalize price dates
+    prices_clean = prices_df.copy()
+    prices_clean['date'] = pd.to_datetime(prices_clean['date']).dt.date
+    prices_clean['date'] = pd.to_datetime(prices_clean['date'])
     
     # Create full date x symbol grid from prices
-    price_dates = pd.to_datetime(prices_df['date']).unique()
-    symbols = trades_df['symbol'].unique()
+    price_dates = sorted(prices_clean['date'].unique())
+    symbols = sorted(trades_clean['symbol'].unique())
     
     full_grid = pd.MultiIndex.from_product(
         [price_dates, symbols],
         names=['date', 'symbol']
     ).to_frame(index=False)
     
-    # Merge to get signals (0 where no trade)
+    # Merge with trade signals
     signals_df = full_grid.merge(trade_signals, on=['date', 'symbol'], how='left')
     signals_df['signal'] = signals_df['signal'].fillna(0).astype(int)
     
@@ -58,35 +60,28 @@ def trades_to_daily_signals(trades_df: pd.DataFrame, prices_df: pd.DataFrame) ->
 def enrich_with_price_features(signals_df: pd.DataFrame, prices_df: pd.DataFrame) -> pd.DataFrame:
     """
     Add price-based features for adversary (P6-style).
-    
-    Features:
-    - Price momentum (5, 10, 20 day)
-    - Volatility (10, 30, 60 day)
-    - Price levels
-    
-    Args:
-        signals_df: Daily signals [date, symbol, signal]
-        prices_df: Price history
-    
-    Returns:
-        Enriched DataFrame with features
     """
-    enriched_list = []
+    # Normalize price dates
+    prices_clean = prices_df.copy()
+    prices_clean['date'] = pd.to_datetime(prices_clean['date']).dt.date
+    prices_clean['date'] = pd.to_datetime(prices_clean['date'])
     
     # Detect price column name
     price_col = None
     for col in ['close', 'price', 'adj_close', 'Close']:
-        if col in prices_df.columns:
+        if col in prices_clean.columns:
             price_col = col
             break
     
     if price_col is None:
-        raise ValueError(f"No price column found in prices_df. Available columns: {list(prices_df.columns)}")
+        raise ValueError(f"No price column found. Available: {list(prices_clean.columns)}")
+    
+    enriched_list = []
     
     for symbol in signals_df['symbol'].unique():
-        # Filter data for this symbol
+        # Filter data
         symbol_signals = signals_df[signals_df['symbol'] == symbol].copy()
-        symbol_prices = prices_df[prices_df['symbol'] == symbol].copy()
+        symbol_prices = prices_clean[prices_clean['symbol'] == symbol].copy()
         
         # Merge prices
         symbol_data = symbol_signals.merge(
@@ -95,11 +90,14 @@ def enrich_with_price_features(signals_df: pd.DataFrame, prices_df: pd.DataFrame
             how='left'
         )
         
-        # Rename to standard 'price' column
+        # Rename to standard column
         symbol_data.rename(columns={price_col: 'price'}, inplace=True)
         
         # Sort by date
         symbol_data = symbol_data.sort_values('date')
+        
+        # Forward fill missing prices (weekends/holidays)
+        symbol_data['price'] = symbol_data['price'].fillna(method='ffill')
         
         # Price momentum features
         symbol_data['mom_5d'] = symbol_data['price'].pct_change(5)
@@ -127,8 +125,8 @@ def enrich_with_price_features(signals_df: pd.DataFrame, prices_df: pd.DataFrame
     enriched_df = pd.concat(enriched_list, ignore_index=True)
     
     # Add time features
-    enriched_df['day_of_week'] = pd.to_datetime(enriched_df['date']).dt.dayofweek
-    enriched_df['month'] = pd.to_datetime(enriched_df['date']).dt.month
+    enriched_df['day_of_week'] = enriched_df['date'].dt.dayofweek
+    enriched_df['month'] = enriched_df['date'].dt.month
     enriched_df['is_monday'] = (enriched_df['day_of_week'] == 0).astype(int)
     enriched_df['is_friday'] = (enriched_df['day_of_week'] == 4).astype(int)
     
@@ -138,18 +136,6 @@ def enrich_with_price_features(signals_df: pd.DataFrame, prices_df: pd.DataFrame
 def prepare_adversary_data(trades_df: pd.DataFrame, prices_df: pd.DataFrame) -> pd.DataFrame:
     """
     Main pipeline: Convert trades to adversary-ready format.
-    
-    Steps:
-    1. Convert trades to daily signals
-    2. Add price features
-    3. Create labels (next-day prediction)
-    
-    Args:
-        trades_df: Trade records
-        prices_df: Price history
-    
-    Returns:
-        DataFrame ready for adversary training
     """
     # Step 1: Trades to signals
     signals_df = trades_to_daily_signals(trades_df, prices_df)
@@ -161,8 +147,11 @@ def prepare_adversary_data(trades_df: pd.DataFrame, prices_df: pd.DataFrame) -> 
     enriched_df = enriched_df.sort_values(['symbol', 'date'])
     enriched_df['label'] = enriched_df.groupby('symbol')['signal'].shift(-1)
     
-    # Drop last row per symbol (no future label)
+    # Drop rows with no label (last day per symbol)
     enriched_df = enriched_df.dropna(subset=['label'])
     enriched_df['label'] = enriched_df['label'].astype(int)
+    
+    # Drop rows with missing features (first N days)
+    enriched_df = enriched_df.dropna()
     
     return enriched_df
