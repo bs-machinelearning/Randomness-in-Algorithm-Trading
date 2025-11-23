@@ -44,7 +44,10 @@ def run_next_trade_experiment(
     verbose: bool = True
 ) -> Dict:
     """
-    Run experiment: train predictors on baseline and uniform, compare AUCs.
+    Run experiment: train predictor on BASELINE, test on both baseline and uniform.
+    
+    Key insight: Train on baseline (which has both positive/negative labels),
+    then test predictability on both policies.
     
     Returns:
         Dict with results for both policies
@@ -68,72 +71,95 @@ def run_next_trade_experiment(
         verbose=verbose
     )
     
-    if len(baseline_data) == 0 or len(uniform_data) == 0:
+    if len(baseline_data) == 0:
         return {
             'baseline_auc': 0.50,
             'uniform_auc': 0.50,
             'success': False,
-            'reason': 'insufficient_data'
+            'reason': 'insufficient_baseline_data'
         }
     
     results = {}
     
     # =========================================================================
-    # BASELINE PREDICTOR
+    # TRAIN PREDICTOR ON BASELINE DATA ONLY
     # =========================================================================
     
     if verbose:
         print("\n" + "="*80)
-        print("BASELINE POLICY - NEXT-TRADE PREDICTION")
+        print("TRAINING PREDICTOR ON BASELINE DATA")
         print("="*80)
     
     baseline_train, baseline_val, baseline_test = time_split_data(baseline_data)
     
     if verbose:
-        print(f"[Baseline] Train: {len(baseline_train)}, Val: {len(baseline_val)}, Test: {len(baseline_test)}")
+        print(f"[Training] Train: {len(baseline_train)}, Val: {len(baseline_val)}, Test: {len(baseline_test)}")
     
-    baseline_predictor = NextTradePredictor()
-    baseline_train_metrics = baseline_predictor.train(baseline_train, verbose=verbose)
-    baseline_val_metrics = baseline_predictor.evaluate(baseline_val, verbose=verbose)
+    predictor = NextTradePredictor()
+    train_metrics = predictor.train(baseline_train, verbose=verbose)
+    
+    if not train_metrics['success']:
+        return {
+            'baseline_auc': 0.50,
+            'uniform_auc': 0.50,
+            'success': False,
+            'reason': 'training_failed'
+        }
+    
+    # =========================================================================
+    # TEST ON BASELINE DATA
+    # =========================================================================
+    
+    if verbose:
+        print("\n" + "="*80)
+        print("TESTING ON BASELINE POLICY")
+        print("="*80)
+    
+    baseline_val_metrics = predictor.evaluate(baseline_val, verbose=verbose)
     
     results['baseline'] = {
-        'train_metrics': baseline_train_metrics,
+        'train_metrics': train_metrics,
         'val_metrics': baseline_val_metrics,
         'auc': baseline_val_metrics['auc'],
         'n_samples': len(baseline_data)
     }
     
     # =========================================================================
-    # UNIFORM PREDICTOR
+    # TEST ON UNIFORM DATA
     # =========================================================================
     
     if verbose:
         print("\n" + "="*80)
-        print("UNIFORM POLICY - NEXT-TRADE PREDICTION")
+        print("TESTING ON UNIFORM POLICY (same predictor)")
         print("="*80)
     
-    uniform_train, uniform_val, uniform_test = time_split_data(uniform_data)
-    
-    if verbose:
-        print(f"[Uniform] Train: {len(uniform_train)}, Val: {len(uniform_val)}, Test: {len(uniform_test)}")
-    
-    uniform_predictor = NextTradePredictor()
-    uniform_train_metrics = uniform_predictor.train(uniform_train, verbose=verbose)
-    uniform_val_metrics = uniform_predictor.evaluate(uniform_val, verbose=verbose)
-    
-    results['uniform'] = {
-        'train_metrics': uniform_train_metrics,
-        'val_metrics': uniform_val_metrics,
-        'auc': uniform_val_metrics['auc'],
-        'n_samples': len(uniform_data)
-    }
+    if len(uniform_data) == 0:
+        if verbose:
+            print("[Warning] No uniform data available")
+        uniform_auc = 0.50
+    else:
+        # Use same train/val split ratio
+        uniform_train, uniform_val, uniform_test = time_split_data(uniform_data)
+        
+        if verbose:
+            print(f"[Testing] Using uniform validation set: {len(uniform_val)} samples")
+        
+        # Evaluate using the SAME predictor trained on baseline
+        uniform_val_metrics = predictor.evaluate(uniform_val, verbose=verbose)
+        
+        results['uniform'] = {
+            'val_metrics': uniform_val_metrics,
+            'auc': uniform_val_metrics['auc'],
+            'n_samples': len(uniform_data)
+        }
+        
+        uniform_auc = uniform_val_metrics['auc']
     
     # =========================================================================
     # COMPARISON
     # =========================================================================
     
     baseline_auc = baseline_val_metrics['auc']
-    uniform_auc = uniform_val_metrics['auc']
     auc_reduction = baseline_auc - uniform_auc
     auc_reduction_pct = (auc_reduction / baseline_auc * 100) if baseline_auc > 0 else 0
     
@@ -141,14 +167,18 @@ def run_next_trade_experiment(
         print("\n" + "="*80)
         print("COMPARISON")
         print("="*80)
-        print(f"Baseline AUC:  {baseline_auc:.4f}")
-        print(f"Uniform AUC:   {uniform_auc:.4f}")
+        print(f"Baseline AUC:  {baseline_auc:.4f} (predictor's accuracy on baseline)")
+        print(f"Uniform AUC:   {uniform_auc:.4f} (same predictor's accuracy on uniform)")
         print(f"AUC Reduction: {auc_reduction:.4f} ({auc_reduction_pct:.1f}%)")
+        print()
         
         if uniform_auc < baseline_auc:
             print("✓ Uniform is LESS predictable than baseline (good!)")
+            print(f"  Interpretation: Randomization reduced pattern recognition by {auc_reduction_pct:.1f}%")
+        elif uniform_auc > baseline_auc:
+            print("⚠️  Uniform is MORE predictable than baseline (unexpected!)")
         else:
-            print("⚠️  Uniform is MORE predictable than baseline (unexpected)")
+            print("→ Both policies equally predictable")
     
     results['comparison'] = {
         'baseline_auc': float(baseline_auc),
