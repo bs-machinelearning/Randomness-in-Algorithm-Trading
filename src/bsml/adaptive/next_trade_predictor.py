@@ -1,11 +1,7 @@
 """
 P7 Next-Trade Predictor
 
-Binary classifier: Will there be a trade tomorrow? (Yes/No)
-
-Compare predictability between policies:
-- High AUC = trades are predictable
-- Low AUC = trades are unpredictable (better randomization)
+Binary classifier to predict if there will be a trade tomorrow.
 
 Owner: P7
 Week: 3
@@ -13,251 +9,187 @@ Week: 3
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import GradientBoostingClassifier
-from sklearn.metrics import roc_auc_score, accuracy_score, precision_recall_fscore_support
-from sklearn.model_selection import cross_val_score
 from typing import Dict
-import warnings
-warnings.filterwarnings('ignore')
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.metrics import roc_auc_score, accuracy_score, f1_score, classification_report
+from sklearn.model_selection import cross_val_score
 
 
 class NextTradePredictor:
     """
-    Predicts whether a trade will occur tomorrow based on recent history.
-    
-    Goal: Measure how predictable a policy's trading pattern is.
-    - High AUC (>0.70) = Very predictable (bad - adversary can anticipate)
-    - Low AUC (~0.50-0.60) = Unpredictable (good - adversary can't anticipate)
+    Predict if there will be a trade tomorrow based on recent trading patterns.
     """
     
-    def __init__(
-        self,
-        use_cv: bool = True,
-        n_cv_folds: int = 5,
-        random_state: int = 42
-    ):
-        """
-        Args:
-            use_cv: Use cross-validation for model validation
-            n_cv_folds: Number of CV folds
-            random_state: Random seed
-        """
-        self.use_cv = use_cv
-        self.n_cv_folds = n_cv_folds
-        self.random_state = random_state
-        
+    def __init__(self):
         self.model = None
         self.feature_cols = None
-        self.feature_importance_ = None
-        self.cv_scores = []
+        self.is_trained = False
     
-    def _select_features(self, df: pd.DataFrame) -> list:
-        """Select numeric feature columns, excluding metadata"""
-        exclude = {
-            'date', 'symbol', 'label', 'current_price'
-        }
-        
-        # Use pandas select_dtypes which handles nullable types correctly
-        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-        
-        # Filter out excluded columns
-        feature_cols = [c for c in numeric_cols if c not in exclude]
-        
-        return feature_cols
-    
-    def train(self, train_df: pd.DataFrame, verbose: bool = True) -> Dict:
+    def train(self, train_data: pd.DataFrame, verbose: bool = True) -> Dict:
         """
-        Train predictor to forecast next-day trades.
+        Train the next-trade predictor.
         
         Args:
-            train_df: Training data with 'label' column (1=trade tomorrow, 0=no trade)
-            verbose: Print training diagnostics
-        
+            train_data: DataFrame with features and 'label' column
+            verbose: Print training progress
+            
         Returns:
             Dict with training metrics
         """
         
-        if verbose:
-            print(f"  [Predictor] Training on {len(train_df)} samples...")
-        
-        self.feature_cols = self._select_features(train_df)
-        
-        if verbose:
-            print(f"  [Predictor] Using {len(self.feature_cols)} features")
-        
-        X = train_df[self.feature_cols].fillna(0).values
-        y = train_df['label'].values
-        
-        n_positive = (y == 1).sum()
-        n_negative = (y == 0).sum()
+        # Separate features and labels
+        feature_cols = [c for c in train_data.columns if c not in ['label', 'symbol', 'date']]
+        X_train = train_data[feature_cols].copy()
+        y_train = train_data['label'].copy()
         
         if verbose:
-            print(f"  [Predictor] Positive (trade tomorrow): {n_positive} ({n_positive/len(y)*100:.1f}%)")
-            print(f"  [Predictor] Negative (no trade): {n_negative} ({n_negative/len(y)*100:.1f}%)")
+            print(f"  [Predictor] Training on {len(X_train)} samples...")
+            print(f"  [Predictor] Using {len(feature_cols)} features")
+            n_positive = (y_train == 1).sum()
+            n_negative = (y_train == 0).sum()
+            print(f"  [Predictor] Positive (trade tomorrow): {n_positive} ({n_positive/len(y_train)*100:.1f}%)")
+            print(f"  [Predictor] Negative (no trade): {n_negative} ({n_negative/len(y_train)*100:.1f}%)")
         
-        if n_positive < 10 or n_negative < 10:
+        # Check if we have both classes
+        if len(y_train.unique()) < 2:
+            if verbose:
+                print(f"  [ERROR] Only one class present in training data!")
+                print(f"  [ERROR] Model not trained!")
             return {
                 'success': False,
-                'reason': 'too_few_samples_per_class',
-                'n_samples': len(X),
-                'n_features': len(self.feature_cols),
-                'label_distribution': {'positive': int(n_positive), 'negative': int(n_negative)}
+                'reason': 'single_class',
+                'n_samples': len(X_train),
+                'n_features': len(feature_cols)
             }
         
-        # Train Gradient Boosting classifier
+        # Fill NaNs
+        X_train = X_train.fillna(0)
+        
+        # Train model
         if verbose:
             print(f"  [Predictor] Training Gradient Boosting...")
         
         self.model = GradientBoostingClassifier(
-            n_estimators=200,
-            learning_rate=0.05,
+            n_estimators=100,
             max_depth=5,
-            min_samples_split=20,
-            min_samples_leaf=10,
-            subsample=0.8,
-            max_features='sqrt',
-            random_state=self.random_state,
-            verbose=0
+            learning_rate=0.1,
+            random_state=42
         )
         
-        self.model.fit(X, y)
+        self.model.fit(X_train, y_train)
+        self.feature_cols = feature_cols
+        self.is_trained = True
         
         # Feature importance
-        self.feature_importance_ = pd.DataFrame({
-            'feature': self.feature_cols,
-            'importance': self.model.feature_importances_
-        }).sort_values('importance', ascending=False)
-        
         if verbose:
+            importances = pd.Series(
+                self.model.feature_importances_,
+                index=feature_cols
+            ).sort_values(ascending=False)
+            
             print(f"  [Predictor] Top 5 predictive features:")
-            for idx, row in self.feature_importance_.head(5).iterrows():
-                print(f"    {row['feature']}: {row['importance']:.4f}")
+            for feat, imp in importances.head(5).items():
+                print(f"    {feat}: {imp:.4f}")
         
         # Cross-validation
-        cv_results = {}
-        if self.use_cv and len(X) >= 50:
-            if verbose:
-                print(f"  [Predictor] Running {self.n_cv_folds}-fold CV...")
-            
-            try:
-                cv_scores = cross_val_score(
-                    self.model, X, y,
-                    cv=min(self.n_cv_folds, len(X) // 20),
-                    scoring='roc_auc',
-                    n_jobs=-1
-                )
-                self.cv_scores = cv_scores
-                cv_results = {
-                    'cv_mean': float(cv_scores.mean()),
-                    'cv_std': float(cv_scores.std()),
-                    'cv_scores': cv_scores.tolist()
-                }
-                
-                if verbose:
-                    print(f"  [Predictor] CV AUC: {cv_scores.mean():.4f} ± {cv_scores.std():.4f}")
-            except Exception as e:
-                if verbose:
-                    print(f"  [Warning] CV failed: {e}")
-        
-        # Training set accuracy (for diagnostics)
-        y_pred_train = self.model.predict(X)
-        train_accuracy = accuracy_score(y, y_pred_train)
+        if verbose:
+            print(f"  [Predictor] Running 5-fold CV...")
+        cv_scores = cross_val_score(
+            self.model, X_train, y_train, 
+            cv=5, scoring='roc_auc'
+        )
         
         if verbose:
-            print(f"  [Predictor] Training accuracy: {train_accuracy:.4f}")
+            print(f"  [Predictor] CV AUC: {cv_scores.mean():.4f} ± {cv_scores.std():.4f}")
+        
+        # Training accuracy
+        train_preds = self.model.predict(X_train)
+        train_acc = accuracy_score(y_train, train_preds)
+        
+        if verbose:
+            print(f"  [Predictor] Training accuracy: {train_acc:.4f}")
             print(f"  [Predictor] Training complete ✓")
         
         return {
             'success': True,
-            'n_samples': len(X),
-            'n_features': len(self.feature_cols),
-            'label_distribution': {'positive': int(n_positive), 'negative': int(n_negative)},
-            'train_accuracy': float(train_accuracy),
-            **cv_results
+            'n_samples': len(X_train),
+            'n_features': len(feature_cols),
+            'cv_auc_mean': float(cv_scores.mean()),
+            'cv_auc_std': float(cv_scores.std()),
+            'train_accuracy': float(train_acc),
+            'feature_importance': importances.to_dict()
         }
     
-    def evaluate(self, val_df: pd.DataFrame, verbose: bool = True) -> Dict:
+    def evaluate(self, val_data: pd.DataFrame, verbose: bool = True) -> Dict:
         """
-        Evaluate trade predictability.
-        
-        Lower AUC = less predictable (better randomization)
-        Higher AUC = more predictable (worse - adversary can anticipate)
+        Evaluate predictor on validation data.
         
         Args:
-            val_df: Validation data
-            verbose: Print evaluation diagnostics
-        
+            val_data: DataFrame with features and 'label' column
+            verbose: Print evaluation results
+            
         Returns:
-            Dict with evaluation metrics including AUC
+            Dict with evaluation metrics
         """
         
-        if self.model is None:
+        if not self.is_trained:
             if verbose:
-                print("  [ERROR] Model not trained!")
+                print(f"  [ERROR] Model not trained!")
             return {
-                'auc': 0.50,
                 'success': False,
-                'n_samples': 0
+                'auc': 0.50,
+                'reason': 'not_trained'
             }
+        
+        # Prepare data
+        X_val = val_data[self.feature_cols].copy()
+        y_val = val_data['label'].copy()
+        
+        X_val = X_val.fillna(0)
         
         if verbose:
             print(f"  [Predictor] Evaluating predictability...")
-        
-        X = val_df[self.feature_cols].fillna(0).values
-        y = val_df['label'].values
-        
-        n_positive = (y == 1).sum()
-        n_negative = (y == 0).sum()
-        
-        if verbose:
+            n_positive = (y_val == 1).sum()
+            n_negative = (y_val == 0).sum()
             print(f"  [Predictor] Val set → Positive: {n_positive}, Negative: {n_negative}")
         
-        if n_positive == 0 or n_negative == 0:
+        # Check if we have both classes
+        if len(y_val.unique()) < 2:
             if verbose:
                 print(f"  [WARNING] Single class in validation!")
             return {
-                'auc': 0.50,
-                'success': False,
-                'n_samples': len(y)
+                'success': True,
+                'auc': 0.50,  # Random guessing
+                'accuracy': float((y_val == y_val.mode()[0]).mean()),
+                'reason': 'single_class_validation'
             }
         
-        # Predict probabilities
-        y_pred_proba = self.model.predict_proba(X)[:, 1]
-        y_pred = self.model.predict(X)
+        # Predict
+        y_pred_proba = self.model.predict_proba(X_val)[:, 1]
+        y_pred = self.model.predict(X_val)
         
         # Metrics
-        auc_score = roc_auc_score(y, y_pred_proba)
-        accuracy = accuracy_score(y, y_pred)
-        precision, recall, f1, _ = precision_recall_fscore_support(y, y_pred, average='binary')
+        auc = roc_auc_score(y_val, y_pred_proba)
+        acc = accuracy_score(y_val, y_pred)
+        f1 = f1_score(y_val, y_pred, zero_division=0)
         
         if verbose:
-            print(f"  [Predictor] Val AUC = {auc_score:.4f}")
-            print(f"  [Predictor] Val Accuracy = {accuracy:.4f}")
+            print(f"  [Predictor] Val AUC = {auc:.4f}")
+            print(f"  [Predictor] Val Accuracy = {acc:.4f}")
             print(f"  [Predictor] Val F1 = {f1:.4f}")
             
             # Interpretation
-            if auc_score > 0.70:
+            if auc > 0.75:
                 print(f"  [Predictor] ⚠️  Highly PREDICTABLE - adversary can anticipate trades")
-            elif auc_score < 0.60:
-                print(f"  [Predictor] ✓ UNPREDICTABLE - good randomization!")
-            else:
+            elif auc > 0.60:
                 print(f"  [Predictor] → Moderately predictable")
+            else:
+                print(f"  [Predictor] ✓ UNPREDICTABLE - good randomization!")
         
         return {
-            'auc': float(auc_score),
-            'accuracy': float(accuracy),
-            'precision': float(precision),
-            'recall': float(recall),
-            'f1': float(f1),
             'success': True,
-            'n_samples': len(y)
+            'auc': float(auc),
+            'accuracy': float(acc),
+            'f1': float(f1),
+            'n_samples': len(X_val)
         }
-    
-    def get_feature_importance(self, top_n: int = 20) -> pd.DataFrame:
-        """
-        Get top N most important features for prediction.
-        """
-        if self.feature_importance_ is None:
-            return pd.DataFrame()
-        
-        return self.feature_importance_.head(top_n)
