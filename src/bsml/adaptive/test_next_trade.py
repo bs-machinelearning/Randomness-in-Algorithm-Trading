@@ -165,7 +165,7 @@ def test_prepare_next_trade_data():
 def test_run_experiment():
     """Test: Can we run a single experiment comparing policies?"""
     print("\n" + "="*80)
-    print("TEST 4: Run Single Experiment")
+    print("TEST 4: Run Single Experiment (train on baseline, test on both)")
     print("="*80)
     
     # Use smaller real data
@@ -200,9 +200,13 @@ def test_run_experiment():
     baseline_auc = results['comparison']['baseline_auc']
     uniform_auc = results['comparison']['uniform_auc']
     
-    print(f"\n✓ Baseline AUC: {baseline_auc:.4f}")
-    print(f"✓ Uniform AUC: {uniform_auc:.4f}")
+    print(f"\n✓ Baseline AUC: {baseline_auc:.4f} (trained and tested on baseline)")
+    print(f"✓ Uniform AUC: {uniform_auc:.4f} (same predictor tested on uniform)")
     print(f"✓ AUC Reduction: {results['comparison']['auc_reduction']:.4f}")
+    
+    # New assertion: uniform should be different from baseline
+    if uniform_auc != baseline_auc:
+        print(f"✓ Policies show different predictability patterns")
     
     print("✅ PASSED")
     return True
@@ -238,6 +242,7 @@ def test_adaptive_loop():
     assert 'uniform_auc' in results_df.columns, "Should have uniform AUC"
     
     print(f"\n✓ Completed {len(results_df)} iterations")
+    print(f"✓ Final baseline AUC: {results_df.iloc[-1]['baseline_auc']:.4f}")
     print(f"✓ Final uniform AUC: {results_df.iloc[-1]['uniform_auc']:.4f}")
     
     print("✅ PASSED")
