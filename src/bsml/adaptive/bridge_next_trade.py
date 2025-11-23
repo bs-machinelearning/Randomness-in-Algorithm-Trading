@@ -11,6 +11,7 @@ Week: 3
 import numpy as np
 import pandas as pd
 from typing import Tuple
+from datetime import timedelta
 
 
 def create_next_trade_dataset(trades: pd.DataFrame, prices: pd.DataFrame, lookback: int = 5) -> pd.DataFrame:
@@ -63,14 +64,15 @@ def create_next_trade_dataset(trades: pd.DataFrame, prices: pd.DataFrame, lookba
             if len(past_trades) < lookback:
                 continue
             
-            # Check if there's a trade tomorrow
-            has_trade_tomorrow = len(symbol_trades[symbol_trades['date'] == next_date]) > 0
+            # Check if there's a trade in the next N days (not just tomorrow)
+            prediction_window = 5  # days
+            has_trade_in_window = False
             
-            # Get current market context
-            current_price_row = symbol_prices[symbol_prices['date'] <= current_date].iloc[-1] if len(symbol_prices[symbol_prices['date'] <= current_date]) > 0 else None
-            
-            if current_price_row is None:
-                continue
+            for day_offset in range(1, prediction_window + 1):
+                future_date = current_date + timedelta(days=day_offset)
+                if len(symbol_trades[symbol_trades['date'] == future_date]) > 0:
+                    has_trade_in_window = True
+                    break
             
             # =====================================================================
             # FEATURE ENGINEERING: Past Trade Patterns
@@ -79,8 +81,14 @@ def create_next_trade_dataset(trades: pd.DataFrame, prices: pd.DataFrame, lookba
             features = {
                 'symbol': symbol,
                 'date': current_date,
-                'label': int(has_trade_tomorrow)
+                'label': int(has_trade_in_window)  # 1 if trade in next 5 days
             }
+            
+            # Get current market context
+            current_price_row = symbol_prices[symbol_prices['date'] <= current_date].iloc[-1] if len(symbol_prices[symbol_prices['date'] <= current_date]) > 0 else None
+            
+            if current_price_row is None:
+                continue
             
             # 1. Time since last trade
             last_trade_date = past_trades.iloc[-1]['date']
@@ -190,8 +198,8 @@ def prepare_next_trade_data(
         n_positive_baseline = (baseline_data['label'] == 1).sum()
         n_negative_baseline = (baseline_data['label'] == 0).sum()
         print(f"[Bridge Next-Trade] Baseline: {len(baseline_data)} observations")
-        print(f"[Bridge Next-Trade]   → {n_positive_baseline} with trade tomorrow ({n_positive_baseline/len(baseline_data)*100:.1f}%)")
-        print(f"[Bridge Next-Trade]   → {n_negative_baseline} no trade tomorrow ({n_negative_baseline/len(baseline_data)*100:.1f}%)")
+        print(f"[Bridge Next-Trade]   → {n_positive_baseline} with trade in next 5 days ({n_positive_baseline/len(baseline_data)*100:.1f}%)")
+        print(f"[Bridge Next-Trade]   → {n_negative_baseline} no trade in next 5 days ({n_negative_baseline/len(baseline_data)*100:.1f}%)")
     
     if verbose:
         print("[Bridge Next-Trade] Generating uniform trades...")
@@ -209,8 +217,8 @@ def prepare_next_trade_data(
         n_positive_uniform = (uniform_data['label'] == 1).sum()
         n_negative_uniform = (uniform_data['label'] == 0).sum()
         print(f"[Bridge Next-Trade] Uniform: {len(uniform_data)} observations")
-        print(f"[Bridge Next-Trade]   → {n_positive_uniform} with trade tomorrow ({n_positive_uniform/len(uniform_data)*100:.1f}%)")
-        print(f"[Bridge Next-Trade]   → {n_negative_uniform} no trade tomorrow ({n_negative_uniform/len(uniform_data)*100:.1f}%)")
+        print(f"[Bridge Next-Trade]   → {n_positive_uniform} with trade in next 5 days ({n_positive_uniform/len(uniform_data)*100:.1f}%)")
+        print(f"[Bridge Next-Trade]   → {n_negative_uniform} no trade in next 5 days ({n_negative_uniform/len(uniform_data)*100:.1f}%)")
     
     return baseline_data, uniform_data
 
