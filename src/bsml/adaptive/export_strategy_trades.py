@@ -242,9 +242,8 @@ def main():
     print(f"Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print()
     
-    # Create output directory
-    output_dir = Path("outputs/strategy_trades")
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # Output directory is src/bsml/adaptive
+    output_dir = Path(__file__).parent
     print(f"Output directory: {output_dir}")
     
     # Load price data
@@ -291,12 +290,12 @@ def main():
     print("="*80)
     print(f"Finished: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print()
-    print("Generated files:")
-    print(f"  1. {output_dir}/baseline_trades.csv")
-    print(f"  2. {output_dir}/uniform_trades.csv")
-    print(f"  3. {output_dir}/pink_noise_trades.csv")
-    print(f"  4. {output_dir}/ou_trades.csv")
-    print(f"  5. {output_dir}/strategy_comparison_summary.csv")
+    print("Generated files in src/bsml/adaptive/:")
+    print(f"  1. baseline_trades.csv")
+    print(f"  2. uniform_trades.csv")
+    print(f"  3. pink_noise_trades.csv")
+    print(f"  4. ou_trades.csv")
+    print(f"  5. strategy_comparison_summary.csv")
     print()
     print("Use these CSVs to:")
     print("  - Analyze trade patterns")
