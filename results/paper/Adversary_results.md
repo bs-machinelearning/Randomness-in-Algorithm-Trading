@@ -327,6 +327,3 @@ if MAE% < 3.0%:
 ---
 
 
----
-
-**Experiment completed successfully. The adaptive framework is validated and ready for production use with recommended tweaks for Pink Noise policy.** 🎉
