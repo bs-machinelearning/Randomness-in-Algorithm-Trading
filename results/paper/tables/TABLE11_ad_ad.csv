@@ -1,4 +1,4 @@
-Policy,Iteration_0_MAE,Iteration_1_MAE,Iteration_2_MAE,Iteration_3_MAE,Iteration_4_MAE,Initial_Params,Final_Params,Improvement,Status
-Pink Noise,1.01%,0.98%,1.42%,2.42%,2.44%,price_scale=0.04,price_scale=0.203,+142%,⚠️ Needs More Adaptation
-OU Process,2.53%,4.38%,4.55%,4.38%,4.46%,"theta=0.15, sigma=0.02, scale=1.0","theta=0.18, sigma=0.026, scale=1.5",+76%,✅ Safe (1 iteration)
-Uniform,1.69%,2.17%,2.71%,3.46%,3.60%,"noise=0.03, time=30min","noise=0.066, time=66min",+113%,✅ Safe (3 iterations)
+Policy,Iteration_0_MAE,Iteration_1_MAE,Iteration_2_MAE,Iteration_3_MAE,Iteration_4_MAE,Initial_Params,Final_Params,Improvement
+Pink Noise,1.01%,0.98%,1.42%,2.42%,2.44%,price_scale=0.04,price_scale=0.203,+142%
+OU Process,2.53%,4.38%,4.55%,4.38%,4.46%,"theta=0.15, sigma=0.02, scale=1.0","theta=0.18, sigma=0.026, scale=1.5",+76%
+Uniform,1.69%,2.17%,2.71%,3.46%,3.60%,"noise=0.03, time=30min","noise=0.066, time=66min",+113%
