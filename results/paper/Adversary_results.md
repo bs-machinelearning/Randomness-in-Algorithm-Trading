@@ -326,20 +326,6 @@ if MAE% < 3.0%:
 
 ---
 
-## 📁 **Saved Data**
-
-Results saved to: `adaptive_regression_results.csv`
-
-Contains:
-- 5 rows (one per iteration)
-- MAE% for each policy per iteration
-- Exploitable fractions
-- Full parameter history
-
-**View results:**
-```bash
-cat adaptive_regression_results.csv
-```
 
 ---
 
