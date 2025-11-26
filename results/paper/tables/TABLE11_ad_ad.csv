@@ -1,4 +1,4 @@
-Policy,Iteration_0_MAE,Iteration_1_MAE,Iteration_2_MAE,Iteration_3_MAE,Iteration_4_MAE,Initial_Params,Final_Params,Improvement
-Pink Noise,1.01%,0.98%,1.42%,2.42%,2.44%,price_scale=0.04,price_scale=0.203,+142%
-OU Process,2.53%,4.38%,4.55%,4.38%,4.46%,"theta=0.15, sigma=0.02, scale=1.0","theta=0.18, sigma=0.026, scale=1.5",+76%
-Uniform,1.69%,2.17%,2.71%,3.46%,3.60%,"noise=0.03, time=30min","noise=0.066, time=66min",+113%
+Policy,Iteration_0_MAE,Iteration_1_MAE,Iteration_2_MAE,Iteration_3_MAE,Iteration_4_MAE,Iteration_5_MAE,Iteration_6_MAE,Iteration_7_MAE,Iteration_8_MAE,Iteration_9_MAE,Initial_Params,Final_Params,Improvement
+Pink Noise,1.01%,0.91%,1.05%,1.44%,1.23%,1.44%,2.28%,1.79%,2.74%,3.36%,price_scale=0.04,price_scale=0.247,+234%
+OU Process,2.53%,3.29%,4.66%,6.12%,8.37%,11.50%,11.61%,11.40%,11.78%,11.98%,"theta=0.15, sigma=0.02, scale=1.0","theta=0.373, sigma=0.050, scale=2.49",+374%
+Uniform,1.64%,1.95%,2.37%,2.73%,3.47%,4.00%,4.71%,5.65%,6.50%,7.98%,"noise=0.03, time=30min","noise=0.186, time=186min",+387%
