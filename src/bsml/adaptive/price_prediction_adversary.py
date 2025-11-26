@@ -15,8 +15,6 @@ Three Adversaries:
 2. Baseline → OU Price Predictor  
 3. Baseline → Uniform Price Predictor
 
-Owner: P7
-Week: 3
 """
 
 import pandas as pd
