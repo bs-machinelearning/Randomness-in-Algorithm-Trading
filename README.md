@@ -1,4 +1,4 @@
-# Randomness-in-Algorithm-Trading---BSML
+# Randomness in Algorithm Trading - BSML
 
 ## Abstract
 
