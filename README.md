@@ -14,7 +14,7 @@ using both:
 - static machine-learning binary classifiers, and  
 - regression-based adversaries predicting execution prices.
 
-According to the paper’s main findings :contentReference[oaicite:1]{index=1}:
+According to the paper’s main findings :
 - OU policy reduces adversarial predictability by **27%** (AUC 0.78 → 0.57)  
 - OU improves implementation shortfall by **14.8 bps**, driven by **10.6 bps decrease in adverse selection**  
 - Portfolio Sharpe improves **19%** (0.94 → 1.12)  
