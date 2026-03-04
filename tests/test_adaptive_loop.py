@@ -86,8 +86,8 @@ def mock_uniform_policy():
 def mock_ou_policy():
     """Fixture for OU policy with standard initial params."""
     return MockPolicy(seed=42, params={
-        'theta': 0.15,
-        'sigma': 0.05,
+        'theta': 0.5,
+        'sigma': 0.5,
         'mu': 0.0
     })
 

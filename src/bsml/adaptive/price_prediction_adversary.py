@@ -331,10 +331,11 @@ def train_and_evaluate_price_predictor(
         print(f"  Features: {X.shape[1]}")
         print(f"  Samples:  {X.shape[0]}")
     
-    # Train/test split (temporal split would be better, but random for now)
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, random_state=random_state
-    )
+    # Temporal 70/30 split: first 70% of rows (sorted by time) → train, last 30% → test
+    n_total = len(X)
+    n_train = int(n_total * (1.0 - test_size))
+    X_train, X_test = X.iloc[:n_train], X.iloc[n_train:]
+    y_train, y_test = y[:n_train], y[n_train:]
     
     # Extract baseline prices for test set (for percentage calculation)
     baseline_prices_test = X_test['baseline_price'].values

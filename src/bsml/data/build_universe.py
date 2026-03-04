@@ -18,11 +18,11 @@ TICKERS = [
     "VOO",   # Vanguard S&P 500
     "QQQ",   # Invesco QQQ
     "VTI",   # Vanguard Total Stock Market
-    "VEA",   # Vanguard FTSE Developed Markets
-    "VWO",   # Vanguard FTSE Emerging Markets
-    "AGG",   # iShares Core U.S. Aggregate Bond
-    "IEMG",  # iShares Core MSCI Emerging Markets
-    "IJR",   # iShares Core S&P Small-Cap
+    "EEM",   # iShares MSCI Emerging Markets  (replaces VEA per paper Section 4)
+    "GLD",   # SPDR Gold Shares               (replaces VWO per paper Section 4)
+    "TLT",   # iShares 20+ Year Treasury Bond (replaces AGG per paper Section 4)
+    "XLF",   # Financial Select Sector SPDR   (replaces IEMG per paper Section 4)
+    "EFA",   # iShares MSCI EAFE              (replaces IJR per paper Section 4)
 ]
 
 OUT_DIR = os.path.join("data", "etf_1y")

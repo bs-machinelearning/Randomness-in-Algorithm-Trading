@@ -30,8 +30,8 @@ RESULTS_CSV = RESULTS_DIR / "trades_for_adversary.csv"
 # Policies = randomization strategies from your repo
 POLICIES = ["baseline", "uniform_policy", "ou", "pink"]
 
-# You can change or extend this
-SEEDS = [101, 202, 303]
+# 50 seeds as specified in paper Section 5
+SEEDS = list(range(50))
 
 
 # -----------------------------

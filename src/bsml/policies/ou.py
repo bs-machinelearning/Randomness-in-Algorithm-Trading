@@ -14,5 +14,6 @@ def generate_trades(prices: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=["date", "symbol", "side", "qty", "ref_price"])
 
     # You can tweak these hyperparameters if you want stronger/weaker noise
-    policy = OUPolicy(theta=0.15, sigma=0.02, price_scale=1.0, seed=42)
+    # Use paper-default parameters (Section 7): θ=0.5, σ=0.5
+    policy = OUPolicy(theta=0.5, sigma=0.5, price_scale=0.04, seed=42)
     return policy.generate_trades(prices)

@@ -1,13 +1,14 @@
+# Python
 __pycache__/
 *.pyc
+*.pyo
+.pytest_cache/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Outputs
 outputs/
 results/
-paper/figures/
-paper/tables/
-
 *.ipynb_checkpoints/
-
-__pycache__/
-results/
-*.ipynb_checkpoints
-

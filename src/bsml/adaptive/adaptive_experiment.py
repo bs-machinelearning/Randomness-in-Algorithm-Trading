@@ -49,23 +49,23 @@ class AdaptiveExperimentRegression:
     If prediction error (MAE%) is low, the policy needs stronger randomization.
     """
     
-    def __init__(self, prices: pd.DataFrame, mae_threshold: float = 0.5, random_state: int = 42):
+    def __init__(self, prices: pd.DataFrame, mae_threshold: float = 10.0, random_state: int = 42):
         """
         Initialize experiment.
-        
+
         Args:
             prices: Market price data
-            mae_threshold: MAE% threshold for adaptation (0.5% = transaction costs)
+            mae_threshold: MAE% threshold for adaptation (10.0% per paper Section 7)
             random_state: Random seed
         """
         self.prices = prices
         self.mae_threshold = mae_threshold
         self.random_state = random_state
-        
-        # Initialize policies with default parameters
+
+        # Initialize policies with paper-correct parameters (Section 6)
         self.pink_params = {'alpha': 1.0, 'price_scale': 0.04}
-        self.ou_params = {'theta': 0.15, 'sigma': 0.02, 'price_scale': 1.0}
-        self.uniform_params = {'price_noise': 0.03, 'time_noise_minutes': 30.0}
+        self.ou_params = {'theta': 0.5, 'sigma': 0.5, 'price_scale': 0.04}
+        self.uniform_params = {'price_noise': 0.0005, 'time_noise_minutes': 120.0}
         
         # Track MAE% history
         self.mae_history = {

@@ -415,18 +415,18 @@ if __name__ == "__main__":
             {'alpha': 1.0, 'price_scale': 0.2025}
         ],
         'ou': [
-            {'theta': 0.15, 'sigma': 0.02, 'price_scale': 1.0},
-            {'theta': 0.18, 'sigma': 0.026, 'price_scale': 1.5},
-            {'theta': 0.216, 'sigma': 0.034, 'price_scale': 2.25},
-            {'theta': 0.259, 'sigma': 0.044, 'price_scale': 3.38},
-            {'theta': 0.311, 'sigma': 0.057, 'price_scale': 5.06}
+            {'theta': 0.5, 'sigma': 0.5, 'price_scale': 0.04},
+            {'theta': 0.6, 'sigma': 0.6, 'price_scale': 0.048},
+            {'theta': 0.72, 'sigma': 0.72, 'price_scale': 0.058},
+            {'theta': 0.864, 'sigma': 0.864, 'price_scale': 0.069},
+            {'theta': 1.037, 'sigma': 1.037, 'price_scale': 0.083}
         ],
         'uniform': [
-            {'price_noise': 0.03, 'time_noise_minutes': 30},
-            {'price_noise': 0.039, 'time_noise_minutes': 39},
-            {'price_noise': 0.051, 'time_noise_minutes': 51},
-            {'price_noise': 0.066, 'time_noise_minutes': 66},
-            {'price_noise': 0.086, 'time_noise_minutes': 86}
+            {'price_noise': 0.0005, 'time_noise_minutes': 120},
+            {'price_noise': 0.0006, 'time_noise_minutes': 144},
+            {'price_noise': 0.00072, 'time_noise_minutes': 173},
+            {'price_noise': 0.00086, 'time_noise_minutes': 207},
+            {'price_noise': 0.00104, 'time_noise_minutes': 249}
         ]
     }
     
